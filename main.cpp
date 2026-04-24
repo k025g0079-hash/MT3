@@ -250,6 +250,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Matrix4x4 makeidentity = MakeIdentity();
 
 
+		Vector resultAdd = Add(v1, v2);
+		Vector resultSub = Subtract(v1, v2);
+		Vector resultMul = Multiply(k, v1);
+		float resultDot = Dot(v1, v2);
+		float resultLen = Length(v1);
+		Vector resultNor = Normalize(v2);
 		///
 		/// ↑更新処理ここまで
 		///
@@ -286,6 +292,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");
 
 
+		VectorScreenPrintf(0, y, resultNor, "Normalize");
 		///
 		/// ↑描画処理ここまで
 		///
