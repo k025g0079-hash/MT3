@@ -2,12 +2,12 @@
 #include <math.h>
 #include <assert.h>
 #include <utility> 
-
 struct Vector {
 	float x;
 	float y;
 	float z;
 };
+
 
 struct Matrix4x4
 {
@@ -174,9 +174,76 @@ Matrix4x4 MakeIdentity() {
 	return result;
 }
 
+// 平行移動行列
+Matrix4x4 MakeTranslateMatrix(const Vector& translate) {
+
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[3][0] = translate.x;
+	result.m[3][1] = translate.y;
+	result.m[3][2] = translate.z;
+
+	return result;
+}
+
+// 拡大縮小行列
+Matrix4x4 MakeScaleMatrix(const Vector& scale) {
+
+	Matrix4x4 result{};
+
+	result.m[0][0] = scale.x;
+	result.m[1][1] = scale.y;
+	result.m[2][2] = scale.z;
+	result.m[3][3] = 1.0f;
+
+	return result;
+}
+
+// 座標変換
+Vector Transform(const Vector& vector, const Matrix4x4& matrix) {
+
+	Vector result{};
+
+	result.x =
+		vector.x * matrix.m[0][0] +
+		vector.y * matrix.m[1][0] +
+		vector.z * matrix.m[2][0] +
+		1.0f * matrix.m[3][0];
+
+	result.y =
+		vector.x * matrix.m[0][1] +
+		vector.y * matrix.m[1][1] +
+		vector.z * matrix.m[2][1] +
+		1.0f * matrix.m[3][1];
+
+	result.z =
+		vector.x * matrix.m[0][2] +
+		vector.y * matrix.m[1][2] +
+		vector.z * matrix.m[2][2] +
+		1.0f * matrix.m[3][2];
+
+	return result;
+}
+
+Vector translate{ 4.1f, 2.6f, 0.8f };
+Vector scale{ 1.5f, 5.2f, 7.3f };
+
+Matrix4x4 translateMatrix = MakeTranslateMatrix(translate);
+Matrix4x4 scaleMatrix = MakeScaleMatrix(scale);
+
+Vector point{ 2.3f, 3.8f, 1.4f };
+
+Matrix4x4 transformMatrix = {
+	1.0f, 2.0f, 3.0f, 4.0f,
+	3.0f, 1.0f, 1.0f, 2.0f,
+	1.0f, 4.0f, 2.0f, 3.0f,
+	2.0f, 2.0f, 1.0f, 3.0f
+};
+
+Vector transformed = Transform(point, transformMatrix);
 
 // 行列ブロック間
-static const int kRowHeight = 120;
+static const int kRowHeight = 160;
 
 // セル間
 static const int kCellHeight = 20;
@@ -201,6 +268,33 @@ void MatrixScreenPrintf(int x, int y, const Matrix4x4& matrix, const char* label
 //void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
 //    Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
 //}
+// 加算
+Vector Add(Vector v1, Vector v2) { return {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z}; }
+
+// 減算
+Vector Subtract(Vector v1, Vector v2) { return {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z}; }
+
+// スカラー倍
+Vector Multiply(float k, Vector v) { return {k * v.x, k * v.y, k * v.z}; }
+
+// 内積
+float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
+
+// 長さ
+float Length(Vector v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
+
+// 正規化
+Vector Normalize(Vector v) {
+	float len = Length(v);
+	if (len == 0.0f)
+		return {0, 0, 0};
+	return {v.x / len, v.y / len, v.z / len};
+}
+
+void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
+    Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
+}
+
 const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_タイトル";
 
 // Windowsアプリでのエントリーポイント(main関数)
@@ -225,6 +319,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓更新処理ここから
 		///
+
 		/*Vector v1 = {1.0f, 3.0f, -5.0f};
 		Vector v2 = {4.0f, -1.0f, 2.0f};
 		float k = 4.0f;
@@ -237,7 +332,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Vector resultNor = Normalize(v2);*/
 
 
-		Matrix4x4 resultAdd = Add(m1, m2);
+		/*Matrix4x4 resultAdd = Add(m1, m2);
 		Matrix4x4 resultMultiply = Multiply(m1, m2);
 		Matrix4x4 resultSubtract = Subtract(m1, m2);
 
@@ -247,15 +342,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Matrix4x4 transposeM1 = Transpose(m1);
 		Matrix4x4 transposeM2 = Transpose(m2);
 
-		Matrix4x4 makeidentity = MakeIdentity();
+		Matrix4x4 makeidentity = MakeIdentity();*/
+		
+		/*VectorScreenPrintf(0, 0, transformed, "transformed");
 
+		MatrixScreenPrintf(0, 40, translateMatrix, "translateMatrix");
 
-		Vector resultAdd = Add(v1, v2);
-		Vector resultSub = Subtract(v1, v2);
-		Vector resultMul = Multiply(k, v1);
-		float resultDot = Dot(v1, v2);
-		float resultLen = Length(v1);
-		Vector resultNor = Normalize(v2);
+		MatrixScreenPrintf(0, kRowHeight + 40,
+			scaleMatrix,
+			"scaleMatrix");*/
+		
 		///
 		/// ↑更新処理ここまで
 		///
@@ -263,6 +359,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓描画処理ここから
 		///
+
 		//int y = 0;
 
 		/*VectorScreenPrintf(0, y, resultAdd, "Add");
@@ -281,7 +378,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		
 
-		MatrixScreenPrintf(0, 0, resultAdd, "Add");
+		/*MatrixScreenPrintf(0, 0, resultAdd, "Add");
 		MatrixScreenPrintf(0, kRowHeight, resultSubtract, "Subtract");
 		MatrixScreenPrintf(0, kRowHeight * 2, resultMultiply, "Multiply");
 		MatrixScreenPrintf(0, kRowHeight * 3, inverseM1, "inverseM1");
@@ -289,11 +386,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		MatrixScreenPrintf(kColumnWidth, 0, transposeM1, "transposeM1");
 		MatrixScreenPrintf(kColumnWidth, kRowHeight, transposeM2, "transposeM2");
-		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");
+		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");*/
 
 
-		VectorScreenPrintf(0, y, resultNor, "Normalize");
-		///
+		VectorScreenPrintf(0, 0, transformed, "transformed");
+
+		MatrixScreenPrintf(0, 40, translateMatrix, "translateMatrix");
+
+		MatrixScreenPrintf(0, kRowHeight + 40,
+			scaleMatrix,
+			"scaleMatrix");
 		/// ↑描画処理ここまで
 		///
 
