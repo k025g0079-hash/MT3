@@ -175,6 +175,35 @@ Matrix4x4 MakeIdentity() {
 	return result;
 }
 
+//3次元マフィン変換行列
+Matrix4x4 MakeAffineMatrix(Vector translation, Vector rotation, Vector scale) {
+	Matrix4x4 result = MakeIdentity();
+	// スケーリング
+	result.m[0][0] = scale.x;
+	result.m[1][1] = scale.y;
+	result.m[2][2] = scale.z;
+	// 回転（オイラー角）
+	float cx = cosf(rotation.x);
+	float sx = sinf(rotation.x);
+	float cy = cosf(rotation.y);
+	float sy = sinf(rotation.y);
+	float cz = cosf(rotation.z);
+	float sz = sinf(rotation.z);
+	result.m[0][0] *= cy * cz;
+	result.m[0][1] *= -cy * sz;
+	result.m[0][2] *= sy;
+	result.m[1][0] *= sx * sy * cz + cx * sz;
+	result.m[1][1] *= -sx * sy * sz + cx * cz;
+	result.m[1][2] *= -sx * cy;
+	result.m[2][0] *= -cx * sy * cz + sx * sz;
+	result.m[2][1] *= cx * sy * sz + sx * cz;
+	result.m[2][2] *= cx * cy;
+	// 平行移動
+	result.m[3][0] = translation.x;
+	result.m[3][1] = translation.y;
+	result.m[3][2] = translation.z;
+	return result;
+}
 
 // 行列ブロック間
 static const int kRowHeight = 120;
@@ -226,7 +255,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓更新処理ここから
 		///
-		Vector v1 = {1.0f, 3.0f, -5.0f};
+		/*Vector v1 = {1.0f, 3.0f, -5.0f};
 		Vector v2 = {4.0f, -1.0f, 2.0f};
 		float k = 4.0f;
 
@@ -248,15 +277,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Matrix4x4 mTransposeM1 = Transpose(m1);
 		Matrix4x4 mTransposeM2 = Transpose(m2);
 
-		Matrix4x4 mIdentity = MakeIdentity();
+		Matrix4x4 mIdentity = MakeIdentity();*/
 
 
-		Vector resultAdd = Add(v1, v2);
-		Vector resultSub = Subtract(v1, v2);
-		Vector resultMul = Multiply(k, v1);
-		float resultDot = Dot(v1, v2);
-		float resultLen = Length(v1);
-		Vector resultNor = Normalize(v2);
+		
+
+		
 		///
 		/// ↑更新処理ここまで
 		///
@@ -264,9 +290,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓描画処理ここから
 		///
-		int y = 0;
+		//int y = 0;
 
-		VectorScreenPrintf(0, y, resultAdd, "Add");
+		/*VectorScreenPrintf(0, y, resultAdd, "Add");
 		y += 20;
 		VectorScreenPrintf(0, y, resultSub, "Subtract");
 		y += 20;
@@ -293,7 +319,14 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, mIdentity, "makeidentity");
 
 
-		VectorScreenPrintf(0, y, resultNor, "Normalize");
+		VectorScreenPrintf(0, y, resultNor, "Normalize");*/
+
+		Vector Scale{ 1.2f, 0.79f, -2.1f };
+		Vector Rotation{ 0.5f, 1.0f, 0.3f };
+		Vector Translation{ 2.0f, -1.0f, 3.0f };
+		Matrix4x4 affineMatrix = MakeAffineMatrix(Translation, Rotation, Scale);	
+		
+		MatrixScreenPrintf(0, 0, affineMatrix, "affineMatrix");
 		///
 		/// ↑描画処理ここまで
 		///
