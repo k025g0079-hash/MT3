@@ -15,28 +15,28 @@ struct Matrix4x4
 	
 };
 
-//// 加算
-//Vector Add(Vector v1, Vector v2) { return {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z}; }
-//
-//// 減算
-//Vector Subtract(Vector v1, Vector v2) { return {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z}; }
-//
-//// スカラー倍
-//Vector Multiply(float k, Vector v) { return {k * v.x, k * v.y, k * v.z}; }
-//
-//// 内積
-//float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
-//
-//// 長さ
-//float Length(Vector v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
-//
-//// 正規化
-//Vector Normalize(Vector v) {
-//	float len = Length(v);
-//	if (len == 0.0f)
-//		return {0, 0, 0};
-//	return {v.x / len, v.y / len, v.z / len};
-//}
+// 加算
+Vector Add(Vector v1, Vector v2) { return {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z}; }
+
+// 減算
+Vector Subtract(Vector v1, Vector v2) { return {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z}; }
+
+// スカラー倍
+Vector Multiply(float k, Vector v) { return {k * v.x, k * v.y, k * v.z}; }
+
+// 内積
+float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
+
+// 長さ
+float Length(Vector v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
+
+// 正規化
+Vector Normalize(Vector v) {
+	float len = Length(v);
+	if (len == 0.0f)
+		return {0, 0, 0};
+	return {v.x / len, v.y / len, v.z / len};
+}
 
 Matrix4x4 m1 = { {
 	{3.2f, 0.7f, 9.6f, 4.4f},
@@ -198,9 +198,9 @@ void MatrixScreenPrintf(int x, int y, const Matrix4x4& matrix, const char* label
 	}
 }
 
-//void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
-//    Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
-//}
+void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
+    Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
+}
 const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_タイトル";
 
 // Windowsアプリでのエントリーポイント(main関数)
@@ -225,7 +225,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓更新処理ここから
 		///
-		/*Vector v1 = {1.0f, 3.0f, -5.0f};
+		Vector v1 = {1.0f, 3.0f, -5.0f};
 		Vector v2 = {4.0f, -1.0f, 2.0f};
 		float k = 4.0f;
 
@@ -234,12 +234,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Vector resultMul = Multiply(k, v1);
 		float resultDot = Dot(v1, v2);
 		float resultLen = Length(v1);
-		Vector resultNor = Normalize(v2);*/
+		Vector resultNor = Normalize(v2);
 
 
-		Matrix4x4 resultAdd = Add(m1, m2);
-		Matrix4x4 resultMultiply = Multiply(m1, m2);
-		Matrix4x4 resultSubtract = Subtract(m1, m2);
+		Matrix4x4 resultMAdd = Add(m1, m2);
+		Matrix4x4 resultMMultiply = Multiply(m1, m2);
+		Matrix4x4 resultMSubtract = Subtract(m1, m2);
 
 		Matrix4x4 inverseM1 = Inverse(m1);
 		Matrix4x4 inverseM2 = Inverse(m2);
@@ -250,12 +250,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Matrix4x4 makeidentity = MakeIdentity();
 
 
-		Vector resultAdd = Add(v1, v2);
-		Vector resultSub = Subtract(v1, v2);
-		Vector resultMul = Multiply(k, v1);
-		float resultDot = Dot(v1, v2);
-		float resultLen = Length(v1);
-		Vector resultNor = Normalize(v2);
+		
 		///
 		/// ↑更新処理ここまで
 		///
@@ -263,9 +258,9 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓描画処理ここから
 		///
-		//int y = 0;
+		int y = 0;
 
-		/*VectorScreenPrintf(0, y, resultAdd, "Add");
+		VectorScreenPrintf(0, y, resultAdd, "Add");
 		y += 20;
 		VectorScreenPrintf(0, y, resultSub, "Subtract");
 		y += 20;
@@ -277,13 +272,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Novice::ScreenPrintf(0, y, "%6.2f : Length", resultLen);
 		y += 20;
 
-		VectorScreenPrintf(0, y, resultNor, "Normalize");*/
+		
 
 		
 
-		MatrixScreenPrintf(0, 0, resultAdd, "Add");
-		MatrixScreenPrintf(0, kRowHeight, resultSubtract, "Subtract");
-		MatrixScreenPrintf(0, kRowHeight * 2, resultMultiply, "Multiply");
+		MatrixScreenPrintf(0, 0, resultMAdd, "Add");
+		MatrixScreenPrintf(0, kRowHeight, resultMSubtract, "Subtract");
+		MatrixScreenPrintf(0, kRowHeight * 2, resultMMultiply, "Multiply");
 		MatrixScreenPrintf(0, kRowHeight * 3, inverseM1, "inverseM1");
 		MatrixScreenPrintf(0, kRowHeight * 4, inverseM2, "inverseM2");
 
@@ -292,7 +287,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");
 
 
-		VectorScreenPrintf(0, y, resultNor, "Normalize");
+		
 		///
 		/// ↑描画処理ここまで
 		///
