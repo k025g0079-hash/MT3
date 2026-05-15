@@ -176,7 +176,7 @@ Matrix4x4 MakeIdentity() {
 
 
 // 行列ブロック間
-static const int kRowHeight = 120;
+static const int kRowHeight = 140;
 
 // セル間
 static const int kCellHeight = 20;
@@ -197,6 +197,72 @@ void MatrixScreenPrintf(int x, int y, const Matrix4x4& matrix, const char* label
 		}
 	}
 }
+//透視投影行列の作成
+Matrix4x4 MakePerspectiveFovMatrix(
+	float fovY,
+	float aspectRatio,
+	float nearClip,
+	float farClip) {
+
+	Matrix4x4 result{};
+
+	float f = 1.0f / tanf(fovY / 2.0f);
+
+	result.m[0][0] = f / aspectRatio;
+	result.m[1][1] = f;
+	result.m[2][2] = farClip / (farClip - nearClip);
+	result.m[2][3] = 1.0f;
+	result.m[3][2] = (-nearClip * farClip) / (farClip - nearClip);
+
+	return result;
+}
+
+//生射影行列
+Matrix4x4 MakeOrthographicMatrix(
+	float left,
+	float top,
+	float right,
+	float bottom,
+	float nearClip,
+	float farClip) {
+
+	Matrix4x4 result{};
+
+	result.m[0][0] = 2.0f / (right - left);
+	result.m[1][1] = 2.0f / (top - bottom);
+	result.m[2][2] = 1.0f / (farClip - nearClip);
+
+	result.m[3][0] = (left + right) / (left - right);
+	result.m[3][1] = (top + bottom) / (bottom - top);
+	result.m[3][2] = nearClip / (nearClip - farClip);
+	result.m[3][3] = 1.0f;
+
+	return result;
+}
+
+//ビューポート行列の作成
+Matrix4x4 MakeViewportMatrix(
+	float left,
+	float top,
+	float width,
+	float height,
+	float minDepth,
+	float maxDepth) {
+
+	Matrix4x4 result{};
+
+	result.m[0][0] = width / 2.0f;
+	result.m[1][1] = -height / 2.0f;
+	result.m[2][2] = maxDepth - minDepth;
+
+	result.m[3][0] = left + width / 2.0f;
+	result.m[3][1] = top + height / 2.0f;
+	result.m[3][2] = minDepth;
+	result.m[3][3] = 1.0f;
+
+	return result;
+}
+
 
 //void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
 //    Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
@@ -237,25 +303,71 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		Vector resultNor = Normalize(v2);*/
 
 
-		Matrix4x4 resultAdd = Add(m1, m2);
-		Matrix4x4 resultMultiply = Multiply(m1, m2);
-		Matrix4x4 resultSubtract = Subtract(m1, m2);
+		//Matrix4x4 resultAdd = Add(m1, m2);
+		//Matrix4x4 resultMultiply = Multiply(m1, m2);
+		//Matrix4x4 resultSubtract = Subtract(m1, m2);
 
-		Matrix4x4 inverseM1 = Inverse(m1);
-		Matrix4x4 inverseM2 = Inverse(m2);
+		//Matrix4x4 inverseM1 = Inverse(m1);
+		//Matrix4x4 inverseM2 = Inverse(m2);
 
-		Matrix4x4 transposeM1 = Transpose(m1);
-		Matrix4x4 transposeM2 = Transpose(m2);
+		//Matrix4x4 transposeM1 = Transpose(m1);
+		//Matrix4x4 transposeM2 = Transpose(m2);
 
-		Matrix4x4 makeidentity = MakeIdentity();
+		//Matrix4x4 makeidentity = MakeIdentity();
 
+		Matrix4x4 MakePerspectiveFovMatrix(
+			float fovY,
+			float aspectRatio,
+			float nearClip,
+			float farClip);
 
-		Vector resultAdd = Add(v1, v2);
+		Matrix4x4 MakeOrthographicMatrix(
+			float left,
+			float top,
+			float right,
+			float bottom,
+			float nearClip,
+			float farClip);
+
+		Matrix4x4 MakeViewportMatrix(
+			float left,
+			float top,
+			float width,
+			float height,
+			float minDepth,
+			float maxDepth);
+
+		Matrix4x4 orthographicMatrix =
+			MakeOrthographicMatrix(
+				-160.0f,
+				160.0f,
+				200.0f,
+				300.0f,
+				0.0f,
+				1000.0f);
+
+		Matrix4x4 perspectiveFovMatrix =
+			MakePerspectiveFovMatrix(
+				0.63f,
+				1.33f,
+				0.1f,
+				1000.0f);
+
+		Matrix4x4 viewportMatrix =
+			MakeViewportMatrix(
+				100.0f,
+				200.0f,
+				600.0f,
+				300.0f,
+				0.0f,
+				1.0f);
+
+		/*Vector resultAdd = Add(v1, v2);
 		Vector resultSub = Subtract(v1, v2);
 		Vector resultMul = Multiply(k, v1);
 		float resultDot = Dot(v1, v2);
 		float resultLen = Length(v1);
-		Vector resultNor = Normalize(v2);
+		Vector resultNor = Normalize(v2);*/
 		///
 		/// ↑更新処理ここまで
 		///
@@ -281,7 +393,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		
 
-		MatrixScreenPrintf(0, 0, resultAdd, "Add");
+		/*MatrixScreenPrintf(0, 0, resultAdd, "Add");
 		MatrixScreenPrintf(0, kRowHeight, resultSubtract, "Subtract");
 		MatrixScreenPrintf(0, kRowHeight * 2, resultMultiply, "Multiply");
 		MatrixScreenPrintf(0, kRowHeight * 3, inverseM1, "inverseM1");
@@ -289,10 +401,27 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		MatrixScreenPrintf(kColumnWidth, 0, transposeM1, "transposeM1");
 		MatrixScreenPrintf(kColumnWidth, kRowHeight, transposeM2, "transposeM2");
-		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");
+		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");*/
+		
+		MatrixScreenPrintf(
+			0,
+			0,
+			orthographicMatrix,
+			"orthographicMatrix");
 
+		MatrixScreenPrintf(
+			0,
+			kRowHeight,
+			perspectiveFovMatrix,
+			"perspectiveFovMatrix");
 
-		VectorScreenPrintf(0, y, resultNor, "Normalize");
+		MatrixScreenPrintf(
+			0,
+			kRowHeight * 2,
+			viewportMatrix,
+			"viewportMatrix");
+
+		//VectorScreenPrintf(0, y, resultNor, "Normalize");
 		///
 		/// ↑描画処理ここまで
 		///
