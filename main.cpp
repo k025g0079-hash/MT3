@@ -176,35 +176,92 @@ Matrix4x4 MakeIdentity() {
 }
 
 //3次元マフィン変換行列
-Matrix4x4 MakeAffineMatrix(Vector translation, Vector rotation, Vector scale) {
+// スケール行列
+Matrix4x4 MakeScaleMatrix(Vector scale) {
 	Matrix4x4 result = MakeIdentity();
-	// スケーリング
+
 	result.m[0][0] = scale.x;
 	result.m[1][1] = scale.y;
 	result.m[2][2] = scale.z;
-	// 回転（オイラー角）
-	float cx = cosf(rotation.x);
-	float sx = sinf(rotation.x);
-	float cy = cosf(rotation.y);
-	float sy = sinf(rotation.y);
-	float cz = cosf(rotation.z);
-	float sz = sinf(rotation.z);
-	result.m[0][0] *= cy * cz;
-	result.m[0][1] *= -cy * sz;
-	result.m[0][2] *= sy;
-	result.m[1][0] *= sx * sy * cz + cx * sz;
-	result.m[1][1] *= -sx * sy * sz + cx * cz;
-	result.m[1][2] *= -sx * cy;
-	result.m[2][0] *= -cx * sy * cz + sx * sz;
-	result.m[2][1] *= cx * sy * sz + sx * cz;
-	result.m[2][2] *= cx * cy;
-	// 平行移動
-	result.m[3][0] = translation.x;
-	result.m[3][1] = translation.y;
-	result.m[3][2] = translation.z;
+
 	return result;
 }
 
+// X軸回転行列
+Matrix4x4 MakeRotateXMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[1][1] = cosf(radian);
+	result.m[1][2] = sinf(radian);
+	result.m[2][1] = -sinf(radian);
+	result.m[2][2] = cosf(radian);
+
+	return result;
+}
+
+// Y軸回転行列
+Matrix4x4 MakeRotateYMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[0][0] = cosf(radian);
+	result.m[0][2] = -sinf(radian);
+	result.m[2][0] = sinf(radian);
+	result.m[2][2] = cosf(radian);
+
+	return result;
+}
+
+// Z軸回転行列
+Matrix4x4 MakeRotateZMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[0][0] = cosf(radian);
+	result.m[0][1] = sinf(radian);
+	result.m[1][0] = -sinf(radian);
+	result.m[1][1] = cosf(radian);
+
+	return result;
+}
+
+// 平行移動行列
+Matrix4x4 MakeTranslateMatrix(Vector translation) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[3][0] = translation.x;
+	result.m[3][1] = translation.y;
+	result.m[3][2] = translation.z;
+
+	return result;
+}
+
+// アフィン変換行列
+Matrix4x4 MakeAffineMatrix(Vector scale, Vector rotation, Vector translation) {
+
+	// 各行列を作成
+	Matrix4x4 scaleMatrix = MakeScaleMatrix(scale);
+
+	Matrix4x4 rotateXMatrix = MakeRotateXMatrix(rotation.x);
+	Matrix4x4 rotateYMatrix = MakeRotateYMatrix(rotation.y);
+	Matrix4x4 rotateZMatrix = MakeRotateZMatrix(rotation.z);
+
+	Matrix4x4 translateMatrix = MakeTranslateMatrix(translation);
+
+	// 回転行列合成
+	Matrix4x4 rotateMatrix =
+		Multiply(
+			Multiply(rotateXMatrix, rotateYMatrix),
+			rotateZMatrix
+		);
+
+	// SRT合成
+	Matrix4x4 result =
+		Multiply(
+			Multiply(scaleMatrix, rotateMatrix),
+			translateMatrix
+		);
+
+	return result;
+}
 // 行列ブロック間
 static const int kRowHeight = 120;
 
@@ -319,12 +376,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, mIdentity, "makeidentity");
 
 
+
+
 		VectorScreenPrintf(0, y, resultNor, "Normalize");*/
+
+
 
 		Vector Scale{ 1.2f, 0.79f, -2.1f };
 		Vector Rotation{ 0.5f, 1.0f, 0.3f };
 		Vector Translation{ 2.0f, -1.0f, 3.0f };
-		Matrix4x4 affineMatrix = MakeAffineMatrix(Translation, Rotation, Scale);	
+		Matrix4x4 affineMatrix = MakeAffineMatrix(Scale, Rotation, Translation);
 		
 		MatrixScreenPrintf(0, 0, affineMatrix, "affineMatrix");
 		///
