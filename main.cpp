@@ -12,11 +12,11 @@ struct Vector {
 struct Matrix4x4
 {
 	float m[4][4];
-
 };
 
 // 先行宣言
 Matrix4x4 MakeIdentity();
+Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B);
 
 // 加算
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
@@ -41,6 +41,49 @@ Vector Normalize(Vector v) {
 	return { v.x / len, v.y / len, v.z / len };
 }
 
+// ーーー 追加：クロス積（外積）の計算関数 ーーー
+Vector Cross(Vector v1, Vector v2) {
+	return {
+		v1.y * v2.z - v1.z * v2.y,
+		v1.z * v2.x - v1.x * v2.z,
+		v1.x * v2.y - v1.y * v2.x
+	};
+}
+
+// ーーー 追加：座標変換（4x4行列によるベクトルの変換、w除算を含む） ーーー
+Vector Transform(Vector vector, Matrix4x4 matrix) {
+	Vector result;
+	float w = vector.x * matrix.m[0][3] + vector.y * matrix.m[1][3] + vector.z * matrix.m[2][3] + matrix.m[3][3];
+	result.x = (vector.x * matrix.m[0][0] + vector.y * matrix.m[1][0] + vector.z * matrix.m[2][0] + matrix.m[3][0]) / w;
+	result.y = (vector.x * matrix.m[0][1] + vector.y * matrix.m[1][1] + vector.z * matrix.m[2][1] + matrix.m[3][1]) / w;
+	result.z = (vector.x * matrix.m[0][2] + vector.y * matrix.m[1][2] + vector.z * matrix.m[2][2] + matrix.m[3][2]) / w;
+	return result;
+}
+
+// ーーー 追加：透視投影行列の作成 ーーー
+Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearClip, float farClip) {
+	Matrix4x4 result = {};
+	float cot = 1.0f / tanf(fovY / 2.0f);
+	result.m[0][0] = cot / aspect;
+	result.m[1][1] = cot;
+	result.m[2][2] = farClip / (farClip - nearClip);
+	result.m[2][3] = 1.0f;
+	result.m[3][2] = (-nearClip * farClip) / (farClip - nearClip);
+	return result;
+}
+
+// ーーー 追加：ビューポート変換行列の作成 ーーー
+Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth) {
+	Matrix4x4 result = MakeIdentity();
+	result.m[0][0] = width / 2.0f;
+	result.m[1][1] = -height / 2.0f;
+	result.m[2][2] = maxDepth - minDepth;
+	result.m[3][0] = left + width / 2.0f;
+	result.m[3][1] = top + height / 2.0f;
+	result.m[3][2] = minDepth;
+	return result;
+}
+
 Matrix4x4 m1 = { {
 	{3.2f, 0.7f, 9.6f, 4.4f},
 	{5.5f, 1.3f, 7.8f, 2.1f},
@@ -57,58 +100,47 @@ Matrix4x4 m2 = { {
 
 Matrix4x4 MakeScaleMatrix(Vector scale) {
 	Matrix4x4 result = MakeIdentity();
-
 	result.m[0][0] = scale.x;
 	result.m[1][1] = scale.y;
 	result.m[2][2] = scale.z;
-
 	return result;
 }
 
 Matrix4x4 MakeRotateXMatrix(float radian) {
 	Matrix4x4 result = MakeIdentity();
-
 	result.m[1][1] = cosf(radian);
 	result.m[1][2] = sinf(radian);
 	result.m[2][1] = -sinf(radian);
 	result.m[2][2] = cosf(radian);
-
 	return result;
 }
 
 Matrix4x4 MakeRotateYMatrix(float radian) {
 	Matrix4x4 result = MakeIdentity();
-
 	result.m[0][0] = cosf(radian);
 	result.m[0][2] = -sinf(radian);
 	result.m[2][0] = sinf(radian);
 	result.m[2][2] = cosf(radian);
-
 	return result;
 }
 
 Matrix4x4 MakeRotateZMatrix(float radian) {
 	Matrix4x4 result = MakeIdentity();
-
 	result.m[0][0] = cosf(radian);
 	result.m[0][1] = sinf(radian);
 	result.m[1][0] = -sinf(radian);
 	result.m[1][1] = cosf(radian);
-
 	return result;
 }
 
 Matrix4x4 MakeTranslateMatrix(Vector translate) {
 	Matrix4x4 result = MakeIdentity();
-
 	result.m[3][0] = translate.x;
 	result.m[3][1] = translate.y;
 	result.m[3][2] = translate.z;
-
 	return result;
 }
 
-// 行列の積（先に宣言・定義）
 Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B) {
 	Matrix4x4 result{};
 	for (int i = 0; i < 4; i++) {
@@ -122,26 +154,16 @@ Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B) {
 	return result;
 }
 
-Matrix4x4 MakeAffineMatrix(
-	Vector scale,
-	Vector rotate,
-	Vector translate) {
-
+Matrix4x4 MakeAffineMatrix(Vector scale, Vector rotate, Vector translate) {
 	Matrix4x4 S = MakeScaleMatrix(scale);
-
 	Matrix4x4 Rx = MakeRotateXMatrix(rotate.x);
 	Matrix4x4 Ry = MakeRotateYMatrix(rotate.y);
 	Matrix4x4 Rz = MakeRotateZMatrix(rotate.z);
-
 	Matrix4x4 R = Multiply(Multiply(Rx, Ry), Rz);
-
 	Matrix4x4 T = MakeTranslateMatrix(translate);
-
 	return Multiply(Multiply(S, R), T);
 }
 
-
-//行列の加法
 Matrix4x4 Add(Matrix4x4 A, Matrix4x4 B) {
 	Matrix4x4 result{};
 	for (int i = 0; i < 4; i++) {
@@ -152,7 +174,6 @@ Matrix4x4 Add(Matrix4x4 A, Matrix4x4 B) {
 	return result;
 }
 
-//行列の減法
 Matrix4x4 Subtract(Matrix4x4 A, Matrix4x4 B) {
 	Matrix4x4 result{};
 	for (int i = 0; i < 4; i++) {
@@ -163,72 +184,50 @@ Matrix4x4 Subtract(Matrix4x4 A, Matrix4x4 B) {
 	return result;
 }
 
-//逆行列
 Matrix4x4 Inverse(Matrix4x4 m) {
 	Matrix4x4 result{};
-
-	// 拡大行列 [A | I]
 	float a[4][8] = {};
-
 	for (int i = 0; i < 4; i++) {
 		for (int j = 0; j < 4; j++) {
 			a[i][j] = m.m[i][j];
 			a[i][j + 4] = (i == j) ? 1.0f : 0.0f;
 		}
 	}
-
-
 	for (int i = 0; i < 4; i++) {
-
-
 		int pivotRow = i;
 		float maxVal = fabsf(a[i][i]);
-
 		for (int k = i + 1; k < 4; k++) {
 			if (fabsf(a[k][i]) > maxVal) {
 				maxVal = fabsf(a[k][i]);
 				pivotRow = k;
 			}
 		}
-
-		// 行入れ替え
 		if (pivotRow != i) {
 			for (int j = 0; j < 8; j++) {
 				std::swap(a[i][j], a[pivotRow][j]);
 			}
 		}
-
-		//逆行列が存在しないチェック
 		float pivot = a[i][i];
 		assert(fabsf(pivot) > 1e-6f);
-
-		// ピボットを1に
 		for (int j = 0; j < 8; j++) {
 			a[i][j] /= pivot;
 		}
-
-		// 他の行を0に
 		for (int k = 0; k < 4; k++) {
 			if (k == i) continue;
-
 			float factor = a[k][i];
 			for (int j = 0; j < 8; j++) {
 				a[k][j] -= factor * a[i][j];
 			}
 		}
 	}
-
-	// 右側が逆行列
 	for (int i = 0; i < 4; i++) {
 		for (int j = 0; j < 4; j++) {
 			result.m[i][j] = a[i][j + 4];
 		}
 	}
-
 	return result;
 }
 
-//転置行列
 Matrix4x4 Transpose(Matrix4x4 m) {
 	Matrix4x4 result{};
 	for (int i = 0; i < 4; i++) {
@@ -239,7 +238,6 @@ Matrix4x4 Transpose(Matrix4x4 m) {
 	return result;
 }
 
-//単位行列の作成
 Matrix4x4 MakeIdentity() {
 	Matrix4x4 result{};
 	for (int i = 0; i < 4; i++) {
@@ -248,44 +246,31 @@ Matrix4x4 MakeIdentity() {
 	return result;
 }
 
-
-// 行列ブロック間
-static const int kRowHeight = 120;
-
-// セル間
-static const int kCellHeight = 20;
-static const int kCellWidth = 60;
-static const int kColumnWidth = kCellWidth * 4 + 40;
-void MatrixScreenPrintf(int x, int y, const Matrix4x4& matrix, const char* label) {
-
-	Novice::ScreenPrintf(x, y, label);
-
-	for (int row = 0; row < 4; ++row) {
-		for (int column = 0; column < 4; ++column) {
-			Novice::ScreenPrintf(
-				x + column * kCellWidth,
-				y + 20 + row * kCellHeight,
-				"%6.2f",
-				matrix.m[row][column]
-			);
-		}
-	}
-}
-
-void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
-	Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
-}
 const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_タイトル";
 
-// Windowsアプリでのエントリーポイント(main関数)
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
-	// ライブラリの初期化
+	// ライブラリの初期化 (1280x720)
 	Novice::Initialize(kWindowTitle, 1280, 720);
 
 	// キー入力結果を受け取る箱
 	char keys[256] = { 0 };
 	char preKeys[256] = { 0 };
+
+	// ーーー 追加：トランスフォーム変数の初期化 ーーー
+	Vector scale = { 1.0f, 1.0f, 1.0f };
+	Vector rotate = { 0.0f, 0.0f, 0.0f };
+	Vector translate = { 0.0f, 0.0f, 0.0f };
+
+	// カメラ設定
+	Vector cameraTranslate = { 0.0f, 0.0f, -5.0f };
+
+	// ローカル空間上の三角形の3頂点
+	Vector localVertices[3] = {
+		{  0.0f,  1.0f, 0.0f }, // 頂点0 (上)
+		{  1.0f, -1.0f, 0.0f }, // 頂点1 (右下)
+		{ -1.0f, -1.0f, 0.0f }  // 頂点2 (左下)
+	};
 
 	// ウィンドウの×ボタンが押されるまでループ
 	while (Novice::ProcessMessage() == 0) {
@@ -299,36 +284,40 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓更新処理ここから
 		///
-		Vector v1 = { 1.0f, 3.0f, -5.0f };
-		Vector v2 = { 4.0f, -1.0f, 2.0f };
-		float k = 4.0f;
 
-		Vector resultAdd = Add(v1, v2);
-		Vector resultSub = Subtract(v1, v2);
-		Vector resultMul = Multiply(k, v1);
-		float resultDot = Dot(v1, v2);
-		float resultLen = Length(v1);
-		Vector resultNor = Normalize(v2);
+		// ーーー 追加：キー入力による移動処理（WASD等による平行移動） ーーー
+		float speed = 0.05f;
+		if (keys[DIK_A]) { translate.x -= speed; }
+		if (keys[DIK_D]) { translate.x += speed; }
+		if (keys[DIK_W]) { translate.y += speed; }
+		if (keys[DIK_S]) { translate.y -= speed; }
 
+		// ーーー 追加：自動回転処理（Y軸周りを毎フレーム一定速度で回転） ーーー
+		rotate.y += 0.03f;
 
-		Matrix4x4 resultMAdd = Add(m1, m2);
-		Matrix4x4 resultMMultiply = Multiply(m1, m2);
-		Matrix4x4 resultMSubtract = Subtract(m1, m2);
+		// ーーー 各種行列の合成（レンダリングパイプラインの構築） ーーー
+		// 1. World行列の生成 (アフィン変換)
+		Matrix4x4 worldMatrix = MakeAffineMatrix(scale, rotate, translate);
 
-		Matrix4x4 inverseM1 = Inverse(m1);
-		Matrix4x4 inverseM2 = Inverse(m2);
+		// 2. View行列の生成 (カメラ位置からビュー行列を生成。今回は簡易的にInverseを利用)
+		Matrix4x4 cameraMatrix = MakeTranslateMatrix(cameraTranslate);
+		Matrix4x4 viewMatrix = Inverse(cameraMatrix);
 
-		Matrix4x4 transposeM1 = Transpose(m1);
-		Matrix4x4 transposeM2 = Transpose(m2);
+		// 3. Projection行列の生成 (透視投影)
+		Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(0.45f, 1280.0f / 720.0f, 0.1f, 100.0f);
 
-		Matrix4x4 makeidentity = MakeIdentity();
+		// 4. Viewport行列の生成
+		Matrix4x4 viewportMatrix = MakeViewportMatrix(0.0f, 0.0f, 1280.0f, 720.0f, 0.0f, 1.0f);
 
-		Matrix4x4 worldMatrix =
-			MakeAffineMatrix(
-				{ 2.0f,2.0f,2.0f },   // scale
-				{ 0.0f,1.0f,0.0f },   // rotate
-				{ 1.0f,2.0f,3.0f }    // translate
-			);
+		// 行列を一つに合成 (WVP * Viewport)
+		Matrix4x4 wvpMatrix = Multiply(Multiply(worldMatrix, viewMatrix), projectionMatrix);
+		Matrix4x4 wvpViewportMatrix = Multiply(wvpMatrix, viewportMatrix);
+
+		// ーーー 行列変換を行って頂点をスクリーン座標へ変換 ーーー
+		Vector screenVertices[3];
+		for (int i = 0; i < 3; ++i) {
+			screenVertices[i] = Transform(localVertices[i], wvpViewportMatrix);
+		}
 
 		///
 		/// ↑更新処理ここまで
@@ -337,24 +326,15 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓描画処理ここから
 		///
-		int y = 0;
-		Novice::ScreenPrintf(0, y, "%6.2f : Dot", resultDot);
-		Novice::ScreenPrintf(0, y, "%6.2f : Length", resultLen);
 
-
-
-		
-		// ---------------------------------------------------------
-		// 追加：赤い三角形の描画
-		// ---------------------------------------------------------
+		// ーーー 追加：3D行列変換によって計算された座標でポリゴンを描画 ーーー
 		Novice::DrawTriangle(
-			900, 100,  // 頂点1 (上)
-			800, 300,  // 頂点2 (左下)
-			1000, 300, // 頂点3 (右下)
-			0xFF0000FF, // 色 (赤: 0xRRGGBBAA)
-		    FillMode::kFillModeSolid
+			static_cast<int>(screenVertices[0].x), static_cast<int>(screenVertices[0].y),
+			static_cast<int>(screenVertices[1].x), static_cast<int>(screenVertices[1].y),
+			static_cast<int>(screenVertices[2].x), static_cast<int>(screenVertices[2].y),
+			0xFF0000FF, // 赤色
+			FillMode::kFillModeSolid
 		);
-		// ---------------------------------------------------------
 
 		///
 		/// ↑描画処理ここまで
