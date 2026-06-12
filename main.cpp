@@ -12,17 +12,20 @@ struct Vector {
 struct Matrix4x4
 {
 	float m[4][4];
-	
+
 };
 
+// 先行宣言
+Matrix4x4 MakeIdentity();
+
 // 加算
-Vector Add(Vector v1, Vector v2) { return {v1.x + v2.x, v1.y + v2.y, v1.z + v2.z}; }
+Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 
 // 減算
-Vector Subtract(Vector v1, Vector v2) { return {v1.x - v2.x, v1.y - v2.y, v1.z - v2.z}; }
+Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
 
 // スカラー倍
-Vector Multiply(float k, Vector v) { return {k * v.x, k * v.y, k * v.z}; }
+Vector Multiply(float k, Vector v) { return { k * v.x, k * v.y, k * v.z }; }
 
 // 内積
 float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
@@ -34,8 +37,8 @@ float Length(Vector v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
 Vector Normalize(Vector v) {
 	float len = Length(v);
 	if (len == 0.0f)
-		return {0, 0, 0};
-	return {v.x / len, v.y / len, v.z / len};
+		return { 0, 0, 0 };
+	return { v.x / len, v.y / len, v.z / len };
 }
 
 Matrix4x4 m1 = { {
@@ -51,6 +54,91 @@ Matrix4x4 m2 = { {
 	{1.1f, 5.5f, 6.0f, 0.0f},
 	{3.3f, 9.9f, 8.8f, 2.2f}
 } };
+
+Matrix4x4 MakeScaleMatrix(Vector scale) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[0][0] = scale.x;
+	result.m[1][1] = scale.y;
+	result.m[2][2] = scale.z;
+
+	return result;
+}
+
+Matrix4x4 MakeRotateXMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[1][1] = cosf(radian);
+	result.m[1][2] = sinf(radian);
+	result.m[2][1] = -sinf(radian);
+	result.m[2][2] = cosf(radian);
+
+	return result;
+}
+
+Matrix4x4 MakeRotateYMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[0][0] = cosf(radian);
+	result.m[0][2] = -sinf(radian);
+	result.m[2][0] = sinf(radian);
+	result.m[2][2] = cosf(radian);
+
+	return result;
+}
+
+Matrix4x4 MakeRotateZMatrix(float radian) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[0][0] = cosf(radian);
+	result.m[0][1] = sinf(radian);
+	result.m[1][0] = -sinf(radian);
+	result.m[1][1] = cosf(radian);
+
+	return result;
+}
+
+Matrix4x4 MakeTranslateMatrix(Vector translate) {
+	Matrix4x4 result = MakeIdentity();
+
+	result.m[3][0] = translate.x;
+	result.m[3][1] = translate.y;
+	result.m[3][2] = translate.z;
+
+	return result;
+}
+
+// 行列の積（先に宣言・定義）
+Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B) {
+	Matrix4x4 result{};
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			result.m[i][j] = 0.0f;
+			for (int k = 0; k < 4; k++) {
+				result.m[i][j] += A.m[i][k] * B.m[k][j];
+			}
+		}
+	}
+	return result;
+}
+
+Matrix4x4 MakeAffineMatrix(
+	Vector scale,
+	Vector rotate,
+	Vector translate) {
+
+	Matrix4x4 S = MakeScaleMatrix(scale);
+
+	Matrix4x4 Rx = MakeRotateXMatrix(rotate.x);
+	Matrix4x4 Ry = MakeRotateYMatrix(rotate.y);
+	Matrix4x4 Rz = MakeRotateZMatrix(rotate.z);
+
+	Matrix4x4 R = Multiply(Multiply(Rx, Ry), Rz);
+
+	Matrix4x4 T = MakeTranslateMatrix(translate);
+
+	return Multiply(Multiply(S, R), T);
+}
 
 
 //行列の加法
@@ -75,20 +163,6 @@ Matrix4x4 Subtract(Matrix4x4 A, Matrix4x4 B) {
 	return result;
 }
 
-//行列の積
-Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B) {
-	Matrix4x4 result{};
-	for (int i = 0; i < 4; i++) {
-		for (int j = 0; j < 4; j++) {
-			result.m[i][j] = 0.0f;
-			for (int k = 0; k < 4; k++) {
-				result.m[i][j] += A.m[i][k] * B.m[k][j];
-			}
-		}
-	}
-	return result;
-}
-
 //逆行列
 Matrix4x4 Inverse(Matrix4x4 m) {
 	Matrix4x4 result{};
@@ -103,10 +177,10 @@ Matrix4x4 Inverse(Matrix4x4 m) {
 		}
 	}
 
-	
+
 	for (int i = 0; i < 4; i++) {
 
-		
+
 		int pivotRow = i;
 		float maxVal = fabsf(a[i][i]);
 
@@ -199,7 +273,7 @@ void MatrixScreenPrintf(int x, int y, const Matrix4x4& matrix, const char* label
 }
 
 void VectorScreenPrintf(int x, int y, Vector v, const char* label) {
-    Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
+	Novice::ScreenPrintf(x, y, "%6.2f %6.2f %6.2f : %s", v.x, v.y, v.z, label);
 }
 const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_タイトル";
 
@@ -210,8 +284,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	Novice::Initialize(kWindowTitle, 1280, 720);
 
 	// キー入力結果を受け取る箱
-	char keys[256] = {0};
-	char preKeys[256] = {0};
+	char keys[256] = { 0 };
+	char preKeys[256] = { 0 };
 
 	// ウィンドウの×ボタンが押されるまでループ
 	while (Novice::ProcessMessage() == 0) {
@@ -225,8 +299,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		///
 		/// ↓更新処理ここから
 		///
-		Vector v1 = {1.0f, 3.0f, -5.0f};
-		Vector v2 = {4.0f, -1.0f, 2.0f};
+		Vector v1 = { 1.0f, 3.0f, -5.0f };
+		Vector v2 = { 4.0f, -1.0f, 2.0f };
 		float k = 4.0f;
 
 		Vector resultAdd = Add(v1, v2);
@@ -249,8 +323,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		Matrix4x4 makeidentity = MakeIdentity();
 
+		Matrix4x4 worldMatrix =
+			MakeAffineMatrix(
+				{ 2.0f,2.0f,2.0f },   // scale
+				{ 0.0f,1.0f,0.0f },   // rotate
+				{ 1.0f,2.0f,3.0f }    // translate
+			);
 
-		
 		///
 		/// ↑更新処理ここまで
 		///
@@ -259,35 +338,24 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓描画処理ここから
 		///
 		int y = 0;
-
-		VectorScreenPrintf(0, y, resultAdd, "Add");
-		y += 20;
-		VectorScreenPrintf(0, y, resultSub, "Subtract");
-		y += 20;
-		VectorScreenPrintf(0, y, resultMul, "Multiply");
-		y += 20;
-
 		Novice::ScreenPrintf(0, y, "%6.2f : Dot", resultDot);
-		y += 20;
 		Novice::ScreenPrintf(0, y, "%6.2f : Length", resultLen);
-		y += 20;
 
-		
-
-		
-
-		MatrixScreenPrintf(0, 0, resultMAdd, "Add");
-		MatrixScreenPrintf(0, kRowHeight, resultMSubtract, "Subtract");
-		MatrixScreenPrintf(0, kRowHeight * 2, resultMMultiply, "Multiply");
-		MatrixScreenPrintf(0, kRowHeight * 3, inverseM1, "inverseM1");
-		MatrixScreenPrintf(0, kRowHeight * 4, inverseM2, "inverseM2");
-
-		MatrixScreenPrintf(kColumnWidth, 0, transposeM1, "transposeM1");
-		MatrixScreenPrintf(kColumnWidth, kRowHeight, transposeM2, "transposeM2");
-		MatrixScreenPrintf(kColumnWidth, kRowHeight * 2, makeidentity, "makeidentity");
 
 
 		
+		// ---------------------------------------------------------
+		// 追加：赤い三角形の描画
+		// ---------------------------------------------------------
+		Novice::DrawTriangle(
+			900, 100,  // 頂点1 (上)
+			800, 300,  // 頂点2 (左下)
+			1000, 300, // 頂点3 (右下)
+			0xFF0000FF, // 色 (赤: 0xRRGGBBAA)
+		    FillMode::kFillModeSolid
+		);
+		// ---------------------------------------------------------
+
 		///
 		/// ↑描画処理ここまで
 		///
