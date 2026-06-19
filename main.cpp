@@ -154,29 +154,6 @@ Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMat
 	return Transform(position, wvpVpMatrix);
 }
 
-// --- 点と線分の距離演算 ---
-// 点 point から、線分(originから終点diffまで)への最短距離と、その線分上の最近傍点closestPointを求める
-float DistancePointToSegment(Vector point, Vector segmentStart, Vector segmentEnd, Vector& outClosestPoint) {
-	Vector ab = Subtract(segmentEnd, segmentStart);
-	Vector ap = Subtract(point, segmentStart);
-
-	float abLenSq = Dot(ab, ab);
-	if (abLenSq == 0.0f) {
-		outClosestPoint = segmentStart;
-		return Length(ap);
-	}
-
-	// 射影比率 t を計算して 0.0 ～ 1.0 にクランプ
-	float t = Dot(ap, ab) / abLenSq;
-	if (t < 0.0f) t = 0.0f;
-	if (t > 1.0f) t = 1.0f;
-
-	// 線分上の最も近い点
-	outClosestPoint = Add(segmentStart, Multiply(t, ab));
-
-	return Length(Subtract(point, outClosestPoint));
-}
-
 // --- グリッド描画 ---
 void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	const float kGridHalfWidth = 2.0f;
@@ -231,7 +208,18 @@ void DrawSphere(Vector center, float radius, Matrix4x4 viewMatrix, Matrix4x4 pro
 	}
 }
 
-const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_点と線分の距離";
+// --- 【新規追加】球と球の衝突判定関数 ---
+bool IsCollisionSphereToSphere(Vector center1, float radius1, Vector center2, float radius2, float& outDistance) {
+	// 中心点間の差分ベクトルを求める
+	Vector diff = Subtract(center2, center1);
+	// 中心点間の距離を計算
+	outDistance = Length(diff);
+
+	// 距離が半径の合計以下であれば衝突している
+	return outDistance <= (radius1 + radius2);
+}
+
+const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_球と球の衝突判定";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -244,13 +232,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	Vector cameraRotate = { 0.26f, 0.0f, 0.0f };
 	Vector cameraTranslate = { 0.0f, 1.5f, -5.0f };
 
-	// 点（球体の中心として表現）
-	Vector pointPos = { 0.5f, 0.8f, 0.0f };
-	float sphereRadius = 0.05f; // 点の大きさを表す最小限の半径
+	// 球Aの設定
+	Vector sphereACenter = { -0.5f, 0.5f, 0.0f };
+	float sphereARadius = 0.3f;
 
-	// 線分の設定（始点と終点）
-	Vector segmentStart = { -1.0f, 0.2f, -0.5f };
-	Vector segmentEnd = { 1.0f, 0.5f, 0.5f };
+	// 球Bの設定
+	Vector sphereBCenter = { 0.5f, 0.5f, 0.0f };
+	float sphereBRadius = 0.4f;
 
 	char keys[256] = { 0 };
 	char preKeys[256] = { 0 };
@@ -265,32 +253,44 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 点と線分の最短距離および、線分上の最短座標の計算
-		Vector closestPoint{};
-		float distance = DistancePointToSegment(pointPos, segmentStart, segmentEnd, closestPoint);
+		// 球と球の衝突判定と中心間距離の計算
+		float centerDistance = 0.0f;
+		bool isColliding = IsCollisionSphereToSphere(sphereACenter, sphereARadius, sphereBCenter, sphereBRadius, centerDistance);
+
+		// 衝突状態によって描画色を切り替える (衝突:赤 / 非衝突:青と緑)
+		uint32_t colorSphereA = isColliding ? 0xFF0000FF : 0x00FFFFFF; // 青(シアン)
+		uint32_t colorSphereB = isColliding ? 0xFF0000FF : 0x00FF00FF; // 緑
 
 		// --- ImGuiによるコントロールパネル ---
-		ImGui::Begin("Distance Control Panel");
-		
+		ImGui::Begin("Sphere Collision Control Panel");
+
 		if (ImGui::CollapsingHeader("Camera Control", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::DragFloat3("Camera Pos", &cameraTranslate.x, 0.05f);
 			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
 		}
-		
-		if (ImGui::CollapsingHeader("Point (Sphere) Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Point Position", &pointPos.x, 0.02f);
+
+		if (ImGui::CollapsingHeader("Sphere A Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("SphereA Center", &sphereACenter.x, 0.02f);
+			ImGui::DragFloat("SphereA Radius", &sphereARadius, 0.01f, 0.01f, 2.0f);
 		}
-		
-		if (ImGui::CollapsingHeader("Segment Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Segment Start (A)", &segmentStart.x, 0.02f);
-			ImGui::DragFloat3("Segment End (B)", &segmentEnd.x, 0.02f);
+
+		if (ImGui::CollapsingHeader("Sphere B Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("SphereB Center", &sphereBCenter.x, 0.02f);
+			ImGui::DragFloat("SphereB Radius", &sphereBRadius, 0.01f, 0.01f, 2.0f);
 		}
 
 		ImGui::Separator();
-		// 計算結果をImGui上にリアルタイム表示
-		ImGui::Text("Calculated Distance: %.4f", distance);
-		ImGui::Text("Closest Point on Wire: (%.2f, %.2f, %.2f)", closestPoint.x, closestPoint.y, closestPoint.z);
-		
+		// 計算結果・衝突ステータスをImGui上にリアルタイム表示
+		ImGui::Text("Center Distance: %.4f", centerDistance);
+		ImGui::Text("Radius Sum: %.4f", sphereARadius + sphereBRadius);
+
+		if (isColliding) {
+			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
+		}
+		else {
+			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO COLLISION");
+		}
+
 		ImGui::End();
 
 		// 行列の生成
@@ -310,18 +310,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 1. グリッドの描画
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 2. 線分（有限の線）の描画（赤色）
-		Vector pStart = Transform3DTo2D(segmentStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Vector pEnd = Transform3DTo2D(segmentEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, 0xFF0000FF);
+		// 2. 球Aの描画
+		DrawSphere(sphereACenter, sphereARadius, viewMatrix, projectionMatrix, viewportMatrix, colorSphereA);
 
-		// 3. 判定する「点」の描画（今回は小さな球体として描画・青色）
-		DrawSphere(pointPos, sphereRadius, viewMatrix, projectionMatrix, viewportMatrix, 0x00FFFFFF);
+		// 3. 球Bの描画
+		DrawSphere(sphereBCenter, sphereBRadius, viewMatrix, projectionMatrix, viewportMatrix, colorSphereB);
 
-		// 4. 最短距離を示す垂線の描画（点から線分上の最短座標まで・緑色）
-		Vector pPoint = Transform3DTo2D(pointPos, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Vector pClosest = Transform3DTo2D(closestPoint, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Novice::DrawLine((int)pPoint.x, (int)pPoint.y, (int)pClosest.x, (int)pClosest.y, 0x00FF00FF);
+		// 4. 中心同士を結ぶ線の描画 (お互いの近さが視覚的に分かりやすくなります)
+		Vector pA = Transform3DTo2D(sphereACenter, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector pB = Transform3DTo2D(sphereBCenter, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Novice::DrawLine((int)pA.x, (int)pA.y, (int)pB.x, (int)pB.y, 0xFFFFFF88);
 
 		///
 		/// ↑描画処理ここまで
