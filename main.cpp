@@ -16,6 +16,12 @@ struct Matrix4x4
 	float m[4][4];
 };
 
+// --- 平面の構造体 ---
+struct Plane {
+	Vector normal;   // 平面の法線（必ず正規化されたベクトル）
+	float distance;  // 原点から平面までの最短距離
+};
+
 // --- ベクトル演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
@@ -208,18 +214,56 @@ void DrawSphere(Vector center, float radius, Matrix4x4 viewMatrix, Matrix4x4 pro
 	}
 }
 
-// --- 【新規追加】球と球の衝突判定関数 ---
-bool IsCollisionSphereToSphere(Vector center1, float radius1, Vector center2, float radius2, float& outDistance) {
-	// 中心点間の差分ベクトルを求める
-	Vector diff = Subtract(center2, center1);
-	// 中心点間の距離を計算
-	outDistance = Length(diff);
+// --- 平面のワイヤーフレーム描画関数 ---
+void DrawPlane(Plane plane, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	Vector ext1, ext2;
+	if (fabsf(plane.normal.x) > 0.9f) {
+		ext1 = { 0.0f, 1.0f, 0.0f };
+	}
+	else {
+		ext1 = { 1.0f, 0.0f, 0.0f };
+	}
+	ext1 = Normalize(Subtract(ext1, Multiply(Dot(ext1, plane.normal), plane.normal)));
+	ext2 = {
+		plane.normal.y * ext1.z - plane.normal.z * ext1.y,
+		plane.normal.z * ext1.x - plane.normal.x * ext1.z,
+		plane.normal.x * ext1.y - plane.normal.y * ext1.x
+	};
 
-	// 距離が半径の合計以下であれば衝突している
-	return outDistance <= (radius1 + radius2);
+	Vector center = Multiply(plane.distance, plane.normal);
+	float size = 2.0f;
+
+	Vector v0 = Add(center, Add(Multiply(-size, ext1), Multiply(-size, ext2)));
+	Vector v1 = Add(center, Add(Multiply(size, ext1), Multiply(-size, ext2)));
+	Vector v2 = Add(center, Add(Multiply(size, ext1), Multiply(size, ext2)));
+	Vector v3 = Add(center, Add(Multiply(-size, ext1), Multiply(size, ext2)));
+
+	Vector p0 = Transform3DTo2D(v0, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector p1 = Transform3DTo2D(v1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector p2 = Transform3DTo2D(v2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector p3 = Transform3DTo2D(v3, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+
+	Novice::DrawLine((int)p0.x, (int)p0.y, (int)p1.x, (int)p1.y, color);
+	Novice::DrawLine((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y, color);
+	Novice::DrawLine((int)p2.x, (int)p2.y, (int)p3.x, (int)p3.y, color);
+	Novice::DrawLine((int)p3.x, (int)p3.y, (int)p0.x, (int)p0.y, color);
+
+	// 平面の中央から法線ベクトルを視覚化（マゼンタ色）
+	Vector normalEnd = Add(center, Multiply(0.4f, plane.normal));
+	Vector pCenter = Transform3DTo2D(center, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pNormalEnd = Transform3DTo2D(normalEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Novice::DrawLine((int)pCenter.x, (int)pCenter.y, (int)pNormalEnd.x, (int)pNormalEnd.y, 0xFF00FFFF);
 }
 
-const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_球と球の衝突判定";
+// --- 平面と球の衝突判定関数 ---
+bool IsCollisionPlaneToSphere(Plane plane, Vector sphereCenter, float sphereRadius, float& outDistance) {
+	// 点と平面の距離の公式: d = |(Normal ・ Center) - Distance|
+	float signedDistance = Dot(plane.normal, sphereCenter) - plane.distance;
+	outDistance = fabsf(signedDistance);
+	return outDistance <= sphereRadius;
+}
+
+const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3次元衝突判定（平面と球）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -232,13 +276,15 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	Vector cameraRotate = { 0.26f, 0.0f, 0.0f };
 	Vector cameraTranslate = { 0.0f, 1.5f, -5.0f };
 
-	// 球Aの設定
-	Vector sphereACenter = { -0.5f, 0.5f, 0.0f };
-	float sphereARadius = 0.3f;
+	// 球の設定
+	Vector sphereCenter = { 0.0f, 0.5f, 0.0f };
+	float sphereRadius = 0.3f;
 
-	// 球Bの設定
-	Vector sphereBCenter = { 0.5f, 0.5f, 0.0f };
-	float sphereBRadius = 0.4f;
+	// 平目の設定 (初期値は真上を向いた原点を通る床)
+	Plane plane = {
+		Normalize({ 0.0f, 1.0f, 0.0f }),
+		0.0f
+	};
 
 	char keys[256] = { 0 };
 	char preKeys[256] = { 0 };
@@ -253,37 +299,40 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 球と球の衝突判定と中心間距離の計算
-		float centerDistance = 0.0f;
-		bool isColliding = IsCollisionSphereToSphere(sphereACenter, sphereARadius, sphereBCenter, sphereBRadius, centerDistance);
+		// 平面と球の衝突判定
+		float planeToSphereDistance = 0.0f;
+		bool isColliding = IsCollisionPlaneToSphere(plane, sphereCenter, sphereRadius, planeToSphereDistance);
 
-		// 衝突状態によって描画色を切り替える (衝突:赤 / 非衝突:青と緑)
-		uint32_t colorSphereA = isColliding ? 0xFF0000FF : 0x00FFFFFF; // 青(シアン)
-		uint32_t colorSphereB = isColliding ? 0xFF0000FF : 0x00FF00FF; // 緑
+		// 衝突状態によって描画色を切り替える
+		uint32_t colorSphere = isColliding ? 0xFF0000FF : 0x00FFFFFF; // 衝突:赤 / 非衝突:シアン
+		uint32_t colorPlane = isColliding ? 0xFF0000FF : 0xFFFFFFFF; // 衝突:赤 / 非衝突:白
 
 		// --- ImGuiによるコントロールパネル ---
-		ImGui::Begin("Sphere Collision Control Panel");
+		ImGui::Begin("Collision Control Panel");
 
 		if (ImGui::CollapsingHeader("Camera Control", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::DragFloat3("Camera Pos", &cameraTranslate.x, 0.05f);
 			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
 		}
 
-		if (ImGui::CollapsingHeader("Sphere A Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("SphereA Center", &sphereACenter.x, 0.02f);
-			ImGui::DragFloat("SphereA Radius", &sphereARadius, 0.01f, 0.01f, 2.0f);
+		if (ImGui::CollapsingHeader("Sphere Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("Sphere Center", &sphereCenter.x, 0.02f);
+			ImGui::DragFloat("Sphere Radius", &sphereRadius, 0.01f, 0.01f, 2.0f);
 		}
 
-		if (ImGui::CollapsingHeader("Sphere B Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("SphereB Center", &sphereBCenter.x, 0.02f);
-			ImGui::DragFloat("SphereB Radius", &sphereBRadius, 0.01f, 0.01f, 2.0f);
+		if (ImGui::CollapsingHeader("Plane Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::DragFloat3("Plane Normal", &plane.normal.x, 0.01f, -1.0f, 1.0f)) {
+				plane.normal = Normalize(plane.normal); // 法線が変わったら再正規化
+			}
+			ImGui::DragFloat("Plane Distance", &plane.distance, 0.02f, -5.0f, 5.0f);
 		}
 
 		ImGui::Separator();
-		// 計算結果・衝突ステータスをImGui上にリアルタイム表示
-		ImGui::Text("Center Distance: %.4f", centerDistance);
-		ImGui::Text("Radius Sum: %.4f", sphereARadius + sphereBRadius);
 
+		// 計算結果・衝突ステータス表示
+		ImGui::Text("--- Plane to Sphere ---");
+		ImGui::Text("Plane-Sphere Dist: %.4f", planeToSphereDistance);
+		ImGui::Text("Sphere Radius: %.4f", sphereRadius);
 		if (isColliding) {
 			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
 		}
@@ -310,16 +359,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 1. グリッドの描画
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 2. 球Aの描画
-		DrawSphere(sphereACenter, sphereARadius, viewMatrix, projectionMatrix, viewportMatrix, colorSphereA);
+		// 2. 平面の描画
+		DrawPlane(plane, viewMatrix, projectionMatrix, viewportMatrix, colorPlane);
 
-		// 3. 球Bの描画
-		DrawSphere(sphereBCenter, sphereBRadius, viewMatrix, projectionMatrix, viewportMatrix, colorSphereB);
-
-		// 4. 中心同士を結ぶ線の描画 (お互いの近さが視覚的に分かりやすくなります)
-		Vector pA = Transform3DTo2D(sphereACenter, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Vector pB = Transform3DTo2D(sphereBCenter, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Novice::DrawLine((int)pA.x, (int)pA.y, (int)pB.x, (int)pB.y, 0xFFFFFF88);
+		// 3. 球の描画
+		DrawSphere(sphereCenter, sphereRadius, viewMatrix, projectionMatrix, viewportMatrix, colorSphere);
 
 		///
 		/// ↑描画処理ここまで
