@@ -85,8 +85,6 @@ Matrix4x4 MakeIdentity() {
 }
 
 // --- 3D変換用行列生成 ---
-
-// アフィン変換によるワールド行列
 Matrix4x4 MakeAffineMatrix(Vector scale, Vector rotate, Vector translate) {
 	Matrix4x4 rotateX = { {
 		{1.0f, 0.0f, 0.0f, 0.0f},
@@ -117,7 +115,6 @@ Matrix4x4 MakeAffineMatrix(Vector scale, Vector rotate, Vector translate) {
 	return result;
 }
 
-// 透視投影（プロジェクション）行列
 Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearClip, float farClip) {
 	Matrix4x4 result{};
 	float cot = 1.0f / tanf(fovY / 2.0f);
@@ -129,7 +126,6 @@ Matrix4x4 MakePerspectiveFovMatrix(float fovY, float aspect, float nearClip, flo
 	return result;
 }
 
-// ビューポート変換行列
 Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, float minDepth, float maxDepth) {
 	Matrix4x4 result{};
 	result.m[0][0] = width / 2.0f;
@@ -142,11 +138,10 @@ Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, f
 	return result;
 }
 
-// 座標変換 (Vector3 * Matrix4x4)
 Vector Transform(Vector vector, Matrix4x4 matrix) {
 	Vector result{};
 	float w = vector.x * matrix.m[0][3] + vector.y * matrix.m[1][3] + vector.z * matrix.m[2][3] + matrix.m[3][3];
-	if (w == 0.0f) w = 1.0f; // ゼロ除算防止
+	if (w == 0.0f) w = 1.0f;
 
 	result.x = (vector.x * matrix.m[0][0] + vector.y * matrix.m[1][0] + vector.z * matrix.m[2][0] + matrix.m[3][0]) / w;
 	result.y = (vector.x * matrix.m[0][1] + vector.y * matrix.m[1][1] + vector.z * matrix.m[2][1] + matrix.m[3][1]) / w;
@@ -154,10 +149,32 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 	return result;
 }
 
-// --- 描画パイプライン一括変換 ---
 Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	Matrix4x4 wvpVpMatrix = Multiply(worldMatrix, Multiply(viewMatrix, Multiply(projectionMatrix, viewportMatrix)));
 	return Transform(position, wvpVpMatrix);
+}
+
+// --- 点と線分の距離演算 ---
+// 点 point から、線分(originから終点diffまで)への最短距離と、その線分上の最近傍点closestPointを求める
+float DistancePointToSegment(Vector point, Vector segmentStart, Vector segmentEnd, Vector& outClosestPoint) {
+	Vector ab = Subtract(segmentEnd, segmentStart);
+	Vector ap = Subtract(point, segmentStart);
+
+	float abLenSq = Dot(ab, ab);
+	if (abLenSq == 0.0f) {
+		outClosestPoint = segmentStart;
+		return Length(ap);
+	}
+
+	// 射影比率 t を計算して 0.0 ～ 1.0 にクランプ
+	float t = Dot(ap, ab) / abLenSq;
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
+
+	// 線分上の最も近い点
+	outClosestPoint = Add(segmentStart, Multiply(t, ab));
+
+	return Length(Subtract(point, outClosestPoint));
 }
 
 // --- グリッド描画 ---
@@ -169,20 +186,16 @@ void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewpo
 	for (int i = 0; i <= kSubdivision; ++i) {
 		float offset = -kGridHalfWidth + (float)i * gridScale;
 
-		// Z方向の線
 		Vector zStart = { offset, 0.0f, -kGridHalfWidth };
 		Vector zEnd = { offset, 0.0f, kGridHalfWidth };
-		// X方向の線
 		Vector xStart = { -kGridHalfWidth, 0.0f, offset };
 		Vector xEnd = { kGridHalfWidth, 0.0f, offset };
 
-		// スクリーン座標へ変換
 		Vector pZStart = Transform3DTo2D(zStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 		Vector pZEnd = Transform3DTo2D(zEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 		Vector pXStart = Transform3DTo2D(xStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 		Vector pXEnd = Transform3DTo2D(xEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 
-		// センターライン（原点を通る軸）は白、それ以外はグレー
 		uint32_t color = (offset == 0.0f) ? 0xFFFFFFFF : 0x888888FF;
 
 		Novice::DrawLine((int)pZStart.x, (int)pZStart.y, (int)pZEnd.x, (int)pZEnd.y, color);
@@ -192,7 +205,7 @@ void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewpo
 
 // --- 球のワイヤーフレーム描画 ---
 void DrawSphere(Vector center, float radius, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	const int kSubdivision = 12; // 分割数
+	const int kSubdivision = 12;
 	const float pi = 3.1415926535f;
 	float latStep = pi / (float)kSubdivision;
 	float lonStep = (pi * 2.0f) / (float)kSubdivision;
@@ -204,38 +217,21 @@ void DrawSphere(Vector center, float radius, Matrix4x4 viewMatrix, Matrix4x4 pro
 		for (int lon = 0; lon < kSubdivision; ++lon) {
 			float lonAngle = (float)lon * lonStep;
 
-			// 現在の点A
-			Vector a = {
-				radius * cosf(latAngle) * cosf(lonAngle),
-				radius * sinf(latAngle),
-				radius * cosf(latAngle) * sinf(lonAngle)
-			};
-			// 次の経度の点B
-			Vector b = {
-				radius * cosf(latAngle) * cosf(lonAngle + lonStep),
-				radius * sinf(latAngle),
-				radius * cosf(latAngle) * sinf(lonAngle + lonStep)
-			};
-			// 次の緯度の点C
-			Vector c = {
-				radius * cosf(latAngle + latStep) * cosf(lonAngle),
-				radius * sinf(latAngle + latStep),
-				radius * cosf(latAngle + latStep) * sinf(lonAngle)
-			};
+			Vector a = { radius * cosf(latAngle) * cosf(lonAngle), radius * sinf(latAngle), radius * cosf(latAngle) * sinf(lonAngle) };
+			Vector b = { radius * cosf(latAngle) * cosf(lonAngle + lonStep), radius * sinf(latAngle), radius * cosf(latAngle) * sinf(lonAngle + lonStep) };
+			Vector c = { radius * cosf(latAngle + latStep) * cosf(lonAngle), radius * sinf(latAngle + latStep), radius * cosf(latAngle + latStep) * sinf(lonAngle) };
 
-			// スクリーン座標に変換
 			Vector pa = Transform3DTo2D(a, worldMatrix, viewMatrix, projectionMatrix, viewportMatrix);
 			Vector pb = Transform3DTo2D(b, worldMatrix, viewMatrix, projectionMatrix, viewportMatrix);
 			Vector pc = Transform3DTo2D(c, worldMatrix, viewMatrix, projectionMatrix, viewportMatrix);
 
-			// 緯線・経線のワイヤーを描画
 			Novice::DrawLine((int)pa.x, (int)pa.y, (int)pb.x, (int)pb.y, color);
 			Novice::DrawLine((int)pa.x, (int)pa.y, (int)pc.x, (int)pc.y, color);
 		}
 	}
 }
 
-const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3D変換・球体描画";
+const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_点と線分の距離";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -243,14 +239,18 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	const int kScreenHeight = 720;
 	Novice::Initialize(kWindowTitle, kScreenWidth, kScreenHeight);
 
-	// カメラ（ビュー行列用）のトランスフォーム
+	// カメラ設定
 	Vector cameraScale = { 1.0f, 1.0f, 1.0f };
-	Vector cameraRotate = { 0.26f, 0.0f, 0.0f }; // 初期角度を少し傾ける
+	Vector cameraRotate = { 0.26f, 0.0f, 0.0f };
 	Vector cameraTranslate = { 0.0f, 1.5f, -5.0f };
 
-	// 球体の初期設定
-	Vector sphereCenter = { 0.0f, 0.0f, 0.0f };
-	float sphereRadius = 0.6f;
+	// 点（球体の中心として表現）
+	Vector pointPos = { 0.5f, 0.8f, 0.0f };
+	float sphereRadius = 0.05f; // 点の大きさを表す最小限の半径
+
+	// 線分の設定（始点と終点）
+	Vector segmentStart = { -1.0f, 0.2f, -0.5f };
+	Vector segmentEnd = { 1.0f, 0.5f, 0.5f };
 
 	char keys[256] = { 0 };
 	char preKeys[256] = { 0 };
@@ -265,27 +265,38 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// --- ImGuiによるカメラ・オブジェクト操作 ---
-		ImGui::Begin("Camera & Object Control");
+		// 点と線分の最短距離および、線分上の最短座標の計算
+		Vector closestPoint{};
+		float distance = DistancePointToSegment(pointPos, segmentStart, segmentEnd, closestPoint);
+
+		// --- ImGuiによるコントロールパネル ---
+		ImGui::Begin("Distance Control Panel");
+		
 		if (ImGui::CollapsingHeader("Camera Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Position", &cameraTranslate.x, 0.05f);
-			ImGui::DragFloat3("Rotation", &cameraRotate.x, 0.01f);
+			ImGui::DragFloat3("Camera Pos", &cameraTranslate.x, 0.05f);
+			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
 		}
-		if (ImGui::CollapsingHeader("Sphere Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Sphere Center", &sphereCenter.x, 0.05f);
-			ImGui::DragFloat("Sphere Radius", &sphereRadius, 0.01f, 0.1f, 5.0f);
+		
+		if (ImGui::CollapsingHeader("Point (Sphere) Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("Point Position", &pointPos.x, 0.02f);
 		}
+		
+		if (ImGui::CollapsingHeader("Segment Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("Segment Start (A)", &segmentStart.x, 0.02f);
+			ImGui::DragFloat3("Segment End (B)", &segmentEnd.x, 0.02f);
+		}
+
+		ImGui::Separator();
+		// 計算結果をImGui上にリアルタイム表示
+		ImGui::Text("Calculated Distance: %.4f", distance);
+		ImGui::Text("Closest Point on Wire: (%.2f, %.2f, %.2f)", closestPoint.x, closestPoint.y, closestPoint.z);
+		
 		ImGui::End();
 
-		// 各種行列の生成
-		// 1. ビュー行列（カメラのワールド行列の逆行列）
+		// 行列の生成
 		Matrix4x4 cameraWorldMatrix = MakeAffineMatrix(cameraScale, cameraRotate, cameraTranslate);
 		Matrix4x4 viewMatrix = Inverse(cameraWorldMatrix);
-
-		// 2. プロジェクション行列
 		Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(0.45f, (float)kScreenWidth / (float)kScreenHeight, 0.1f, 100.0f);
-
-		// 3. ビューポート行列
 		Matrix4x4 viewportMatrix = MakeViewportMatrix(0.0f, 0.0f, (float)kScreenWidth, (float)kScreenHeight, 0.0f, 1.0f);
 
 		///
@@ -296,11 +307,21 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓描画処理ここから
 		///
 
-		// グリッドの描画
+		// 1. グリッドの描画
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 球のワイヤーフレーム描画
-		DrawSphere(sphereCenter, sphereRadius, viewMatrix, projectionMatrix, viewportMatrix, 0xFF0000FF);
+		// 2. 線分（有限の線）の描画（赤色）
+		Vector pStart = Transform3DTo2D(segmentStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector pEnd = Transform3DTo2D(segmentEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, 0xFF0000FF);
+
+		// 3. 判定する「点」の描画（今回は小さな球体として描画・青色）
+		DrawSphere(pointPos, sphereRadius, viewMatrix, projectionMatrix, viewportMatrix, 0x00FFFFFF);
+
+		// 4. 最短距離を示す垂線の描画（点から線分上の最短座標まで・緑色）
+		Vector pPoint = Transform3DTo2D(pointPos, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector pClosest = Transform3DTo2D(closestPoint, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Novice::DrawLine((int)pPoint.x, (int)pPoint.y, (int)pClosest.x, (int)pClosest.y, 0x00FF00FF);
 
 		///
 		/// ↑描画処理ここまで
