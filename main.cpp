@@ -26,6 +26,12 @@ struct Segment {
 	Vector diff;     // 終点への差分ベクトル(B - A)
 };
 
+struct Triangle {
+	Vector v0;       // 頂点0
+	Vector v1;       // 頂点1
+	Vector v2;       // 頂点2
+};
+
 // --- ベクトル演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
@@ -36,6 +42,13 @@ Vector Normalize(Vector v) {
 	float len = Length(v);
 	if (len == 0.0f) return { 0, 0, 0 };
 	return { v.x / len, v.y / len, v.z / len };
+}
+Vector Cross(Vector v1, Vector v2) {
+	return {
+		v1.y * v2.z - v1.z * v2.y,
+		v1.z * v2.x - v1.x * v2.z,
+		v1.x * v2.y - v1.y * v2.x
+	};
 }
 
 // --- 行列演算 ---
@@ -158,7 +171,6 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 	return result;
 }
 
-// 3D空間から画面(2D)への変換
 Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	Matrix4x4 wvpVpMatrix = Multiply(worldMatrix, Multiply(viewMatrix, Multiply(projectionMatrix, viewportMatrix)));
 	return Transform(position, wvpVpMatrix);
@@ -170,7 +182,6 @@ Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMat
 bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector& outPoint) {
 	float denominator = Dot(plane.normal, segment.diff);
 
-	// 平行な場合は衝突しない
 	if (fabsf(denominator) < 1e-6f) {
 		return false;
 	}
@@ -178,10 +189,47 @@ bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector
 	float numerator = plane.distance - Dot(plane.normal, segment.origin);
 	outT = numerator / denominator;
 
-	// 線分の範囲内(0.0 ~ 1.0)で交差しているか
 	if (outT >= 0.0f && outT <= 1.0f) {
 		outPoint = Add(segment.origin, Multiply(outT, segment.diff));
 		return true;
+	}
+	return false;
+}
+
+// 点が三角形の内側にあるか判定（内外判定用ヘルパー）
+bool IsPointInsideTriangle(Vector p, Triangle triangle, Vector normal) {
+	Vector v01 = Subtract(triangle.v1, triangle.v0);
+	Vector v12 = Subtract(triangle.v2, triangle.v1);
+	Vector v20 = Subtract(triangle.v0, triangle.v2);
+
+	Vector v0p = Subtract(p, triangle.v0);
+	Vector v1p = Subtract(p, triangle.v1);
+	Vector v2p = Subtract(p, triangle.v2);
+
+	Vector cross0 = Cross(v01, v0p);
+	Vector cross1 = Cross(v12, v1p);
+	Vector cross2 = Cross(v20, v2p);
+
+	if (Dot(cross0, normal) >= 0.0f &&
+		Dot(cross1, normal) >= 0.0f &&
+		Dot(cross2, normal) >= 0.0f) {
+		return true;
+	}
+	return false;
+}
+
+// 三角形と線分
+bool IsCollisionTriangleToSegment(Triangle triangle, Segment segment, float& outT, Vector& outPoint) {
+	Vector v01 = Subtract(triangle.v1, triangle.v0);
+	Vector v02 = Subtract(triangle.v2, triangle.v0);
+	Vector normal = Normalize(Cross(v01, v02));
+
+	Plane plane;
+	plane.normal = normal;
+	plane.distance = Dot(normal, triangle.v0);
+
+	if (IsCollisionPlaneToSegment(plane, segment, outT, outPoint)) {
+		return IsPointInsideTriangle(outPoint, triangle, normal);
 	}
 	return false;
 }
@@ -252,6 +300,16 @@ void DrawPlane(Plane plane, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Ma
 	Novice::DrawLine((int)pCenter.x, (int)pCenter.y, (int)pNormalEnd.x, (int)pNormalEnd.y, 0xFF00FFFF);
 }
 
+void DrawTriangle(Triangle triangle, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	Vector p0 = Transform3DTo2D(triangle.v0, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector p1 = Transform3DTo2D(triangle.v1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector p2 = Transform3DTo2D(triangle.v2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+
+	Novice::DrawLine((int)p0.x, (int)p0.y, (int)p1.x, (int)p1.y, color);
+	Novice::DrawLine((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y, color);
+	Novice::DrawLine((int)p2.x, (int)p2.y, (int)p0.x, (int)p0.y, color);
+}
+
 void DrawSegment(Segment segment, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
 	Vector start = segment.origin;
 	Vector end = Add(segment.origin, segment.diff);
@@ -281,7 +339,7 @@ void DrawIntersectionPoint(Vector point, Matrix4x4 viewMatrix, Matrix4x4 project
 }
 
 // --- メイン関数 ---
-const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3次元衝突判定（平面と線分）";
+const char kWindowTitle[] = "3次元衝突判定（平面・三角形と線分）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -297,13 +355,20 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	// 線分(Segment)の設定
 	Segment segment = {
 		{ 0.0f, 1.0f, 0.0f },  // 始点
-		{ 0.0f, -1.5f, 0.0f }  // 差分ベクトル(終点は 0.0f, -0.5f, 0.0f)
+		{ 0.0f, -1.5f, 0.0f }  // 差分ベクトル
 	};
 
 	// 平面の設定
 	Plane plane = {
 		Normalize({ 0.0f, 1.0f, 0.0f }),
 		0.0f
+	};
+
+	// 三角形の設定
+	Triangle triangle = {
+		{ 0.0f,  0.5f, 0.0f }, // 頂点0
+		{ 0.5f, -0.5f, 0.0f }, // 頂点1
+		{-0.5f, -0.5f, 0.0f }  // 頂点2
 	};
 
 	char keys[256] = { 0 };
@@ -319,14 +384,20 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 平面と線分の衝突判定
+		// 1. 平面と線分の衝突判定
 		float segmentT = 0.0f;
 		Vector intersectionPoint = { 0, 0, 0 };
 		bool isSegmentColliding = IsCollisionPlaneToSegment(plane, segment, segmentT, intersectionPoint);
 
-		// 衝突状態によって色を切り替える
-		uint32_t colorSegment = isSegmentColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
-		uint32_t colorPlane = isSegmentColliding ? 0xFF0000FF : 0xFFFFFFFF;
+		// 2. 三角形と線分の衝突判定
+		float triangleT = 0.0f;
+		Vector triangleIntersectionPoint = { 0, 0, 0 };
+		bool isTriangleColliding = IsCollisionTriangleToSegment(triangle, segment, triangleT, triangleIntersectionPoint);
+
+		// 衝突状態による色の切り替え
+		uint32_t colorSegment = isTriangleColliding ? 0xFF0000FF : (isSegmentColliding ? 0xFFFF00FF : 0x00FF00FF);
+		uint32_t colorPlane = isSegmentColliding ? 0x880000FF : 0xFFFFFFFF;
+		uint32_t colorTriangle = isTriangleColliding ? 0xFF0000FF : 0xFFFFFFFF;
 
 		// --- ImGuiによるコントロールパネル ---
 		ImGui::Begin("Collision Control Panel");
@@ -343,6 +414,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			ImGui::DragFloat("Plane Distance", &plane.distance, 0.02f, -5.0f, 5.0f);
 		}
 
+		if (ImGui::CollapsingHeader("Triangle Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("Vertex 0", &triangle.v0.x, 0.02f);
+			ImGui::DragFloat3("Vertex 1", &triangle.v1.x, 0.02f);
+			ImGui::DragFloat3("Vertex 2", &triangle.v2.x, 0.02f);
+		}
+
 		if (ImGui::CollapsingHeader("Segment Control", ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::DragFloat3("Segment Origin(Start)", &segment.origin.x, 0.02f);
 			ImGui::DragFloat3("Segment Diff", &segment.diff.x, 0.02f);
@@ -350,15 +427,26 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		ImGui::Separator();
 
-		// 結果表示
+		// 結果表示 (平面)
 		ImGui::Text("--- Plane to Segment ---");
 		ImGui::Text("Intersect t: %.4f", segmentT);
 		if (isSegmentColliding) {
-			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
+			ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "STATUS: PLANE COLLIDING!");
 			ImGui::Text("Point: (%.2f, %.2f, %.2f)", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z);
 		}
 		else {
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO COLLISION");
+			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO PLANE COLLISION");
+		}
+
+		// 結果表示 (三角形)
+		ImGui::Text("--- Triangle to Segment ---");
+		ImGui::Text("Intersect t: %.4f", triangleT);
+		if (isTriangleColliding) {
+			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: TRIANGLE COLLIDING!");
+			ImGui::Text("Point: (%.2f, %.2f, %.2f)", triangleIntersectionPoint.x, triangleIntersectionPoint.y, triangleIntersectionPoint.z);
+		}
+		else {
+			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO TRIANGLE COLLISION");
 		}
 
 		ImGui::End();
@@ -383,11 +471,19 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 2. 平面
 		DrawPlane(plane, viewMatrix, projectionMatrix, viewportMatrix, colorPlane);
 
-		// 3. 線分
+		// 3. 三角形
+		DrawTriangle(triangle, viewMatrix, projectionMatrix, viewportMatrix, colorTriangle);
+
+		// 4. 線分
 		DrawSegment(segment, viewMatrix, projectionMatrix, viewportMatrix, colorSegment);
 
-		// 4. 線分が衝突している場合は交点(イエロー)を描画
-		if (isSegmentColliding) {
+		// 5. 交点の描画
+		if (isTriangleColliding) {
+			// 三角形との交点はシアン色(水色)
+			DrawIntersectionPoint(triangleIntersectionPoint, viewMatrix, projectionMatrix, viewportMatrix, 0x00FFFFFF);
+		}
+		else if (isSegmentColliding) {
+			// 平面のみとの交点はイエロー(黄色)
 			DrawIntersectionPoint(intersectionPoint, viewMatrix, projectionMatrix, viewportMatrix, 0xFFFF00FF);
 		}
 
