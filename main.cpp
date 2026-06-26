@@ -5,21 +5,25 @@
 #define ImGui_ImplDX12_RGB_Color
 #include <imgui.h>
 
+// --- 構造体定義 ---
 struct Vector {
 	float x;
 	float y;
 	float z;
 };
 
-struct Matrix4x4
-{
+struct Matrix4x4 {
 	float m[4][4];
 };
 
-// --- 平面の構造体 ---
 struct Plane {
 	Vector normal;   // 平面の法線（必ず正規化されたベクトル）
 	float distance;  // 原点から平面までの最短距離
+};
+
+struct Segment {
+	Vector origin;   // 始点(A)
+	Vector diff;     // 終点への差分ベクトル(B - A)
 };
 
 // --- ベクトル演算 ---
@@ -90,7 +94,6 @@ Matrix4x4 MakeIdentity() {
 	return result;
 }
 
-// --- 3D変換用行列生成 ---
 Matrix4x4 MakeAffineMatrix(Vector scale, Vector rotate, Vector translate) {
 	Matrix4x4 rotateX = { {
 		{1.0f, 0.0f, 0.0f, 0.0f},
@@ -155,12 +158,36 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 	return result;
 }
 
+// 3D空間から画面(2D)への変換
 Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	Matrix4x4 wvpVpMatrix = Multiply(worldMatrix, Multiply(viewMatrix, Multiply(projectionMatrix, viewportMatrix)));
 	return Transform(position, wvpVpMatrix);
 }
 
-// --- グリッド描画 ---
+// --- 衝突判定関数 ---
+
+// 平面と線分
+bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector& outPoint) {
+	float denominator = Dot(plane.normal, segment.diff);
+
+	// 平行な場合は衝突しない
+	if (fabsf(denominator) < 1e-6f) {
+		return false;
+	}
+
+	float numerator = plane.distance - Dot(plane.normal, segment.origin);
+	outT = numerator / denominator;
+
+	// 線分の範囲内(0.0 ~ 1.0)で交差しているか
+	if (outT >= 0.0f && outT <= 1.0f) {
+		outPoint = Add(segment.origin, Multiply(outT, segment.diff));
+		return true;
+	}
+	return false;
+}
+
+// --- 描画関数 ---
+
 void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	const float kGridHalfWidth = 2.0f;
 	const int kSubdivision = 10;
@@ -186,35 +213,6 @@ void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewpo
 	}
 }
 
-// --- 球のワイヤーフレーム描画 ---
-void DrawSphere(Vector center, float radius, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	const int kSubdivision = 12;
-	const float pi = 3.1415926535f;
-	float latStep = pi / (float)kSubdivision;
-	float lonStep = (pi * 2.0f) / (float)kSubdivision;
-
-	Matrix4x4 worldMatrix = MakeAffineMatrix({ 1,1,1 }, { 0,0,0 }, center);
-
-	for (int lat = 0; lat < kSubdivision; ++lat) {
-		float latAngle = -pi / 2.0f + (float)lat * latStep;
-		for (int lon = 0; lon < kSubdivision; ++lon) {
-			float lonAngle = (float)lon * lonStep;
-
-			Vector a = { radius * cosf(latAngle) * cosf(lonAngle), radius * sinf(latAngle), radius * cosf(latAngle) * sinf(lonAngle) };
-			Vector b = { radius * cosf(latAngle) * cosf(lonAngle + lonStep), radius * sinf(latAngle), radius * cosf(latAngle) * sinf(lonAngle + lonStep) };
-			Vector c = { radius * cosf(latAngle + latStep) * cosf(lonAngle), radius * sinf(latAngle + latStep), radius * cosf(latAngle + latStep) * sinf(lonAngle) };
-
-			Vector pa = Transform3DTo2D(a, worldMatrix, viewMatrix, projectionMatrix, viewportMatrix);
-			Vector pb = Transform3DTo2D(b, worldMatrix, viewMatrix, projectionMatrix, viewportMatrix);
-			Vector pc = Transform3DTo2D(c, worldMatrix, viewMatrix, projectionMatrix, viewportMatrix);
-
-			Novice::DrawLine((int)pa.x, (int)pa.y, (int)pb.x, (int)pb.y, color);
-			Novice::DrawLine((int)pa.x, (int)pa.y, (int)pc.x, (int)pc.y, color);
-		}
-	}
-}
-
-// --- 平面のワイヤーフレーム描画関数 ---
 void DrawPlane(Plane plane, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
 	Vector ext1, ext2;
 	if (fabsf(plane.normal.x) > 0.9f) {
@@ -248,22 +246,42 @@ void DrawPlane(Plane plane, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Ma
 	Novice::DrawLine((int)p2.x, (int)p2.y, (int)p3.x, (int)p3.y, color);
 	Novice::DrawLine((int)p3.x, (int)p3.y, (int)p0.x, (int)p0.y, color);
 
-	// 平面の中央から法線ベクトルを視覚化（マゼンタ色）
 	Vector normalEnd = Add(center, Multiply(0.4f, plane.normal));
 	Vector pCenter = Transform3DTo2D(center, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 	Vector pNormalEnd = Transform3DTo2D(normalEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 	Novice::DrawLine((int)pCenter.x, (int)pCenter.y, (int)pNormalEnd.x, (int)pNormalEnd.y, 0xFF00FFFF);
 }
 
-// --- 平面と球の衝突判定関数 ---
-bool IsCollisionPlaneToSphere(Plane plane, Vector sphereCenter, float sphereRadius, float& outDistance) {
-	// 点と平面の距離の公式: d = |(Normal ・ Center) - Distance|
-	float signedDistance = Dot(plane.normal, sphereCenter) - plane.distance;
-	outDistance = fabsf(signedDistance);
-	return outDistance <= sphereRadius;
+void DrawSegment(Segment segment, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	Vector start = segment.origin;
+	Vector end = Add(segment.origin, segment.diff);
+
+	Vector pStart = Transform3DTo2D(start, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pEnd = Transform3DTo2D(end, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+
+	Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, color);
 }
 
-const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3次元衝突判定（平面と球）";
+void DrawIntersectionPoint(Vector point, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	float size = 0.05f;
+	Vector xStart = Add(point, { -size, 0, 0 }), xEnd = Add(point, { size, 0, 0 });
+	Vector yStart = Add(point, { 0, -size, 0 }), yEnd = Add(point, { 0, size, 0 });
+	Vector zStart = Add(point, { 0, 0, -size }), zEnd = Add(point, { 0, 0, size });
+
+	Vector pXs = Transform3DTo2D(xStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pXe = Transform3DTo2D(xEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pYs = Transform3DTo2D(yStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pYe = Transform3DTo2D(yEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pZs = Transform3DTo2D(zStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pZe = Transform3DTo2D(zEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+
+	Novice::DrawLine((int)pXs.x, (int)pXs.y, (int)pXe.x, (int)pXe.y, color);
+	Novice::DrawLine((int)pYs.x, (int)pYs.y, (int)pYe.x, (int)pYe.y, color);
+	Novice::DrawLine((int)pZs.x, (int)pZs.y, (int)pZe.x, (int)pZe.y, color);
+}
+
+// --- メイン関数 ---
+const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3次元衝突判定（平面と線分）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -276,11 +294,13 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	Vector cameraRotate = { 0.26f, 0.0f, 0.0f };
 	Vector cameraTranslate = { 0.0f, 1.5f, -5.0f };
 
-	// 球の設定
-	Vector sphereCenter = { 0.0f, 0.5f, 0.0f };
-	float sphereRadius = 0.3f;
+	// 線分(Segment)の設定
+	Segment segment = {
+		{ 0.0f, 1.0f, 0.0f },  // 始点
+		{ 0.0f, -1.5f, 0.0f }  // 差分ベクトル(終点は 0.0f, -0.5f, 0.0f)
+	};
 
-	// 平目の設定 (初期値は真上を向いた原点を通る床)
+	// 平面の設定
 	Plane plane = {
 		Normalize({ 0.0f, 1.0f, 0.0f }),
 		0.0f
@@ -299,13 +319,14 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 平面と球の衝突判定
-		float planeToSphereDistance = 0.0f;
-		bool isColliding = IsCollisionPlaneToSphere(plane, sphereCenter, sphereRadius, planeToSphereDistance);
+		// 平面と線分の衝突判定
+		float segmentT = 0.0f;
+		Vector intersectionPoint = { 0, 0, 0 };
+		bool isSegmentColliding = IsCollisionPlaneToSegment(plane, segment, segmentT, intersectionPoint);
 
-		// 衝突状態によって描画色を切り替える
-		uint32_t colorSphere = isColliding ? 0xFF0000FF : 0x00FFFFFF; // 衝突:赤 / 非衝突:シアン
-		uint32_t colorPlane = isColliding ? 0xFF0000FF : 0xFFFFFFFF; // 衝突:赤 / 非衝突:白
+		// 衝突状態によって色を切り替える
+		uint32_t colorSegment = isSegmentColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
+		uint32_t colorPlane = isSegmentColliding ? 0xFF0000FF : 0xFFFFFFFF;
 
 		// --- ImGuiによるコントロールパネル ---
 		ImGui::Begin("Collision Control Panel");
@@ -315,26 +336,26 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
 		}
 
-		if (ImGui::CollapsingHeader("Sphere Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Sphere Center", &sphereCenter.x, 0.02f);
-			ImGui::DragFloat("Sphere Radius", &sphereRadius, 0.01f, 0.01f, 2.0f);
-		}
-
 		if (ImGui::CollapsingHeader("Plane Control", ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (ImGui::DragFloat3("Plane Normal", &plane.normal.x, 0.01f, -1.0f, 1.0f)) {
-				plane.normal = Normalize(plane.normal); // 法線が変わったら再正規化
+				plane.normal = Normalize(plane.normal);
 			}
 			ImGui::DragFloat("Plane Distance", &plane.distance, 0.02f, -5.0f, 5.0f);
 		}
 
+		if (ImGui::CollapsingHeader("Segment Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("Segment Origin(Start)", &segment.origin.x, 0.02f);
+			ImGui::DragFloat3("Segment Diff", &segment.diff.x, 0.02f);
+		}
+
 		ImGui::Separator();
 
-		// 計算結果・衝突ステータス表示
-		ImGui::Text("--- Plane to Sphere ---");
-		ImGui::Text("Plane-Sphere Dist: %.4f", planeToSphereDistance);
-		ImGui::Text("Sphere Radius: %.4f", sphereRadius);
-		if (isColliding) {
+		// 結果表示
+		ImGui::Text("--- Plane to Segment ---");
+		ImGui::Text("Intersect t: %.4f", segmentT);
+		if (isSegmentColliding) {
 			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
+			ImGui::Text("Point: (%.2f, %.2f, %.2f)", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z);
 		}
 		else {
 			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO COLLISION");
@@ -356,14 +377,19 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓描画処理ここから
 		///
 
-		// 1. グリッドの描画
+		// 1. グリッド
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 2. 平面の描画
+		// 2. 平面
 		DrawPlane(plane, viewMatrix, projectionMatrix, viewportMatrix, colorPlane);
 
-		// 3. 球の描画
-		DrawSphere(sphereCenter, sphereRadius, viewMatrix, projectionMatrix, viewportMatrix, colorSphere);
+		// 3. 線分
+		DrawSegment(segment, viewMatrix, projectionMatrix, viewportMatrix, colorSegment);
+
+		// 4. 線分が衝突している場合は交点(イエロー)を描画
+		if (isSegmentColliding) {
+			DrawIntersectionPoint(intersectionPoint, viewMatrix, projectionMatrix, viewportMatrix, 0xFFFF00FF);
+		}
 
 		///
 		/// ↑描画処理ここまで
