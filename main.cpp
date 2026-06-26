@@ -2,6 +2,7 @@
 #include <math.h>
 #include <assert.h>
 #include <utility> 
+#include <algorithm> // std::min, std::max用
 #define ImGui_ImplDX12_RGB_Color
 #include <imgui.h>
 
@@ -16,39 +17,20 @@ struct Matrix4x4 {
 	float m[4][4];
 };
 
-struct Plane {
-	Vector normal;   // 平面の法線（必ず正規化されたベクトル）
-	float distance;  // 原点から平面までの最短距離
-};
-
-struct Segment {
-	Vector origin;   // 始点(A)
-	Vector diff;     // 終点への差分ベクトル(B - A)
-};
-
-struct Triangle {
-	Vector v0;       // 頂点0
-	Vector v1;       // 頂点1
-	Vector v2;       // 頂点2
+struct AABB {
+	Vector min; // 最小座標
+	Vector max; // 最大座標
 };
 
 // --- ベクトル演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
 Vector Multiply(float k, Vector v) { return { k * v.x, k * v.y, k * v.z }; }
-float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
 float Length(Vector v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
 Vector Normalize(Vector v) {
 	float len = Length(v);
 	if (len == 0.0f) return { 0, 0, 0 };
 	return { v.x / len, v.y / len, v.z / len };
-}
-Vector Cross(Vector v1, Vector v2) {
-	return {
-		v1.y * v2.z - v1.z * v2.y,
-		v1.z * v2.x - v1.x * v2.z,
-		v1.x * v2.y - v1.y * v2.x
-	};
 }
 
 // --- 行列演算 ---
@@ -178,58 +160,13 @@ Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMat
 
 // --- 衝突判定関数 ---
 
-// 平面と線分
-bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector& outPoint) {
-	float denominator = Dot(plane.normal, segment.diff);
-
-	if (fabsf(denominator) < 1e-6f) {
-		return false;
-	}
-
-	float numerator = plane.distance - Dot(plane.normal, segment.origin);
-	outT = numerator / denominator;
-
-	if (outT >= 0.0f && outT <= 1.0f) {
-		outPoint = Add(segment.origin, Multiply(outT, segment.diff));
+// AABBとAABBの衝突判定
+bool IsCollisionAABBToAABB(AABB aabb1, AABB aabb2) {
+	if ((aabb1.min.x <= aabb2.max.x && aabb1.max.x >= aabb2.min.x) &&
+		(aabb1.min.y <= aabb2.max.y && aabb1.max.y >= aabb2.min.y) &&
+		(aabb1.min.z <= aabb2.max.z && aabb1.max.z >= aabb2.min.z))
+	{
 		return true;
-	}
-	return false;
-}
-
-// 点が三角形の内側にあるか判定（内外判定用ヘルパー）
-bool IsPointInsideTriangle(Vector p, Triangle triangle, Vector normal) {
-	Vector v01 = Subtract(triangle.v1, triangle.v0);
-	Vector v12 = Subtract(triangle.v2, triangle.v1);
-	Vector v20 = Subtract(triangle.v0, triangle.v2);
-
-	Vector v0p = Subtract(p, triangle.v0);
-	Vector v1p = Subtract(p, triangle.v1);
-	Vector v2p = Subtract(p, triangle.v2);
-
-	Vector cross0 = Cross(v01, v0p);
-	Vector cross1 = Cross(v12, v1p);
-	Vector cross2 = Cross(v20, v2p);
-
-	if (Dot(cross0, normal) >= 0.0f &&
-		Dot(cross1, normal) >= 0.0f &&
-		Dot(cross2, normal) >= 0.0f) {
-		return true;
-	}
-	return false;
-}
-
-// 三角形と線分
-bool IsCollisionTriangleToSegment(Triangle triangle, Segment segment, float& outT, Vector& outPoint) {
-	Vector v01 = Subtract(triangle.v1, triangle.v0);
-	Vector v02 = Subtract(triangle.v2, triangle.v0);
-	Vector normal = Normalize(Cross(v01, v02));
-
-	Plane plane;
-	plane.normal = normal;
-	plane.distance = Dot(normal, triangle.v0);
-
-	if (IsCollisionPlaneToSegment(plane, segment, outT, outPoint)) {
-		return IsPointInsideTriangle(outPoint, triangle, normal);
 	}
 	return false;
 }
@@ -261,85 +198,44 @@ void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewpo
 	}
 }
 
-void DrawPlane(Plane plane, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	Vector ext1, ext2;
-	if (fabsf(plane.normal.x) > 0.9f) {
-		ext1 = { 0.0f, 1.0f, 0.0f };
-	}
-	else {
-		ext1 = { 1.0f, 0.0f, 0.0f };
-	}
-	ext1 = Normalize(Subtract(ext1, Multiply(Dot(ext1, plane.normal), plane.normal)));
-	ext2 = {
-		plane.normal.y * ext1.z - plane.normal.z * ext1.y,
-		plane.normal.z * ext1.x - plane.normal.x * ext1.z,
-		plane.normal.x * ext1.y - plane.normal.y * ext1.x
+void DrawAABB(AABB aabb, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	Vector vertices[8] = {
+		{ aabb.min.x, aabb.min.y, aabb.min.z },
+		{ aabb.max.x, aabb.min.y, aabb.min.z },
+		{ aabb.min.x, aabb.max.y, aabb.min.z },
+		{ aabb.max.x, aabb.max.y, aabb.min.z },
+		{ aabb.min.x, aabb.min.y, aabb.max.z },
+		{ aabb.max.x, aabb.min.y, aabb.max.z },
+		{ aabb.min.x, aabb.max.y, aabb.max.z },
+		{ aabb.max.x, aabb.max.y, aabb.max.z }
 	};
 
-	Vector center = Multiply(plane.distance, plane.normal);
-	float size = 2.0f;
+	Vector screenVertices[8];
+	for (int i = 0; i < 8; ++i) {
+		screenVertices[i] = Transform3DTo2D(vertices[i], MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	}
 
-	Vector v0 = Add(center, Add(Multiply(-size, ext1), Multiply(-size, ext2)));
-	Vector v1 = Add(center, Add(Multiply(size, ext1), Multiply(-size, ext2)));
-	Vector v2 = Add(center, Add(Multiply(size, ext1), Multiply(size, ext2)));
-	Vector v3 = Add(center, Add(Multiply(-size, ext1), Multiply(size, ext2)));
+	// 手前の面
+	Novice::DrawLine((int)screenVertices[0].x, (int)screenVertices[0].y, (int)screenVertices[1].x, (int)screenVertices[1].y, color);
+	Novice::DrawLine((int)screenVertices[1].x, (int)screenVertices[1].y, (int)screenVertices[3].x, (int)screenVertices[3].y, color);
+	Novice::DrawLine((int)screenVertices[3].x, (int)screenVertices[3].y, (int)screenVertices[2].x, (int)screenVertices[2].y, color);
+	Novice::DrawLine((int)screenVertices[2].x, (int)screenVertices[2].y, (int)screenVertices[0].x, (int)screenVertices[0].y, color);
 
-	Vector p0 = Transform3DTo2D(v0, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector p1 = Transform3DTo2D(v1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector p2 = Transform3DTo2D(v2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector p3 = Transform3DTo2D(v3, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	// 奥の面
+	Novice::DrawLine((int)screenVertices[4].x, (int)screenVertices[4].y, (int)screenVertices[5].x, (int)screenVertices[5].y, color);
+	Novice::DrawLine((int)screenVertices[5].x, (int)screenVertices[5].y, (int)screenVertices[7].x, (int)screenVertices[7].y, color);
+	Novice::DrawLine((int)screenVertices[7].x, (int)screenVertices[7].y, (int)screenVertices[6].x, (int)screenVertices[6].y, color);
+	Novice::DrawLine((int)screenVertices[6].x, (int)screenVertices[6].y, (int)screenVertices[4].x, (int)screenVertices[4].y, color);
 
-	Novice::DrawLine((int)p0.x, (int)p0.y, (int)p1.x, (int)p1.y, color);
-	Novice::DrawLine((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y, color);
-	Novice::DrawLine((int)p2.x, (int)p2.y, (int)p3.x, (int)p3.y, color);
-	Novice::DrawLine((int)p3.x, (int)p3.y, (int)p0.x, (int)p0.y, color);
-
-	Vector normalEnd = Add(center, Multiply(0.4f, plane.normal));
-	Vector pCenter = Transform3DTo2D(center, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pNormalEnd = Transform3DTo2D(normalEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Novice::DrawLine((int)pCenter.x, (int)pCenter.y, (int)pNormalEnd.x, (int)pNormalEnd.y, 0xFF00FFFF);
-}
-
-void DrawTriangle(Triangle triangle, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	Vector p0 = Transform3DTo2D(triangle.v0, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector p1 = Transform3DTo2D(triangle.v1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector p2 = Transform3DTo2D(triangle.v2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-
-	Novice::DrawLine((int)p0.x, (int)p0.y, (int)p1.x, (int)p1.y, color);
-	Novice::DrawLine((int)p1.x, (int)p1.y, (int)p2.x, (int)p2.y, color);
-	Novice::DrawLine((int)p2.x, (int)p2.y, (int)p0.x, (int)p0.y, color);
-}
-
-void DrawSegment(Segment segment, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	Vector start = segment.origin;
-	Vector end = Add(segment.origin, segment.diff);
-
-	Vector pStart = Transform3DTo2D(start, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pEnd = Transform3DTo2D(end, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-
-	Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, color);
-}
-
-void DrawIntersectionPoint(Vector point, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	float size = 0.05f;
-	Vector xStart = Add(point, { -size, 0, 0 }), xEnd = Add(point, { size, 0, 0 });
-	Vector yStart = Add(point, { 0, -size, 0 }), yEnd = Add(point, { 0, size, 0 });
-	Vector zStart = Add(point, { 0, 0, -size }), zEnd = Add(point, { 0, 0, size });
-
-	Vector pXs = Transform3DTo2D(xStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pXe = Transform3DTo2D(xEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pYs = Transform3DTo2D(yStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pYe = Transform3DTo2D(yEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pZs = Transform3DTo2D(zStart, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pZe = Transform3DTo2D(zEnd, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-
-	Novice::DrawLine((int)pXs.x, (int)pXs.y, (int)pXe.x, (int)pXe.y, color);
-	Novice::DrawLine((int)pYs.x, (int)pYs.y, (int)pYe.x, (int)pYe.y, color);
-	Novice::DrawLine((int)pZs.x, (int)pZs.y, (int)pZe.x, (int)pZe.y, color);
+	// 縦の柱
+	Novice::DrawLine((int)screenVertices[0].x, (int)screenVertices[0].y, (int)screenVertices[4].x, (int)screenVertices[4].y, color);
+	Novice::DrawLine((int)screenVertices[1].x, (int)screenVertices[1].y, (int)screenVertices[5].x, (int)screenVertices[5].y, color);
+	Novice::DrawLine((int)screenVertices[2].x, (int)screenVertices[2].y, (int)screenVertices[6].x, (int)screenVertices[6].y, color);
+	Novice::DrawLine((int)screenVertices[3].x, (int)screenVertices[3].y, (int)screenVertices[7].x, (int)screenVertices[7].y, color);
 }
 
 // --- メイン関数 ---
-const char kWindowTitle[] = "3次元衝突判定（平面・三角形と線分）";
+const char kWindowTitle[] = "3次元衝突判定（AABBとAABB）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -349,26 +245,19 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	// カメラ設定
 	Vector cameraScale = { 1.0f, 1.0f, 1.0f };
-	Vector cameraRotate = { 0.26f, 0.0f, 0.0f };
-	Vector cameraTranslate = { 0.0f, 1.5f, -5.0f };
+	Vector cameraRotate = { 0.35f, -0.6f, 0.0f };
+	Vector cameraTranslate = { 1.5f, 2.5f, -4.5f };
 
-	// 線分(Segment)の設定
-	Segment segment = {
-		{ 0.0f, 1.0f, 0.0f },  // 始点
-		{ 0.0f, -1.5f, 0.0f }  // 差分ベクトル
+	// AABB 1 の初期設定
+	AABB aabb1 = {
+		{ -0.5f, 0.0f, -0.5f }, // min
+		{  0.5f, 1.0f,  0.5f }  // max
 	};
 
-	// 平面の設定
-	Plane plane = {
-		Normalize({ 0.0f, 1.0f, 0.0f }),
-		0.0f
-	};
-
-	// 三角形の設定
-	Triangle triangle = {
-		{ 0.0f,  0.5f, 0.0f }, // 頂点0
-		{ 0.5f, -0.5f, 0.0f }, // 頂点1
-		{-0.5f, -0.5f, 0.0f }  // 頂点2
+	// AABB 2 の初期設定
+	AABB aabb2 = {
+		{  0.2f, 0.2f,  0.2f }, // min
+		{  1.2f, 1.2f,  1.2f }  // max
 	};
 
 	char keys[256] = { 0 };
@@ -384,21 +273,6 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 1. 平面と線分の衝突判定
-		float segmentT = 0.0f;
-		Vector intersectionPoint = { 0, 0, 0 };
-		bool isSegmentColliding = IsCollisionPlaneToSegment(plane, segment, segmentT, intersectionPoint);
-
-		// 2. 三角形と線分の衝突判定
-		float triangleT = 0.0f;
-		Vector triangleIntersectionPoint = { 0, 0, 0 };
-		bool isTriangleColliding = IsCollisionTriangleToSegment(triangle, segment, triangleT, triangleIntersectionPoint);
-
-		// 衝突状態による色の切り替え
-		uint32_t colorSegment = isTriangleColliding ? 0xFF0000FF : (isSegmentColliding ? 0xFFFF00FF : 0x00FF00FF);
-		uint32_t colorPlane = isSegmentColliding ? 0x880000FF : 0xFFFFFFFF;
-		uint32_t colorTriangle = isTriangleColliding ? 0xFF0000FF : 0xFFFFFFFF;
-
 		// --- ImGuiによるコントロールパネル ---
 		ImGui::Begin("Collision Control Panel");
 
@@ -407,46 +281,43 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
 		}
 
-		if (ImGui::CollapsingHeader("Plane Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			if (ImGui::DragFloat3("Plane Normal", &plane.normal.x, 0.01f, -1.0f, 1.0f)) {
-				plane.normal = Normalize(plane.normal);
-			}
-			ImGui::DragFloat("Plane Distance", &plane.distance, 0.02f, -5.0f, 5.0f);
+		if (ImGui::CollapsingHeader("AABB 1 Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("AABB1 Min", &aabb1.min.x, 0.02f);
+			ImGui::DragFloat3("AABB1 Max", &aabb1.max.x, 0.02f);
 		}
 
-		if (ImGui::CollapsingHeader("Triangle Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Vertex 0", &triangle.v0.x, 0.02f);
-			ImGui::DragFloat3("Vertex 1", &triangle.v1.x, 0.02f);
-			ImGui::DragFloat3("Vertex 2", &triangle.v2.x, 0.02f);
-		}
-
-		if (ImGui::CollapsingHeader("Segment Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Segment Origin(Start)", &segment.origin.x, 0.02f);
-			ImGui::DragFloat3("Segment Diff", &segment.diff.x, 0.02f);
+		if (ImGui::CollapsingHeader("AABB 2 Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("AABB2 Min", &aabb2.min.x, 0.02f);
+			ImGui::DragFloat3("AABB2 Max", &aabb2.max.x, 0.02f);
 		}
 
 		ImGui::Separator();
 
-		// 結果表示 (平面)
-		ImGui::Text("--- Plane to Segment ---");
-		ImGui::Text("Intersect t: %.4f", segmentT);
-		if (isSegmentColliding) {
-			ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "STATUS: PLANE COLLIDING!");
-			ImGui::Text("Point: (%.2f, %.2f, %.2f)", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z);
-		}
-		else {
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO PLANE COLLISION");
-		}
+		// 【対策】Windows.hのマクロ競合を防ぐため、(std::min) と (std::max) のようにカッコで囲んでいます
+		aabb1 = {
+			{ (std::min)(aabb1.min.x, aabb1.max.x), (std::min)(aabb1.min.y, aabb1.max.y), (std::min)(aabb1.min.z, aabb1.max.z) },
+			{ (std::max)(aabb1.min.x, aabb1.max.x), (std::max)(aabb1.min.y, aabb1.max.y), (std::max)(aabb1.min.z, aabb1.max.z) }
+		};
 
-		// 結果表示 (三角形)
-		ImGui::Text("--- Triangle to Segment ---");
-		ImGui::Text("Intersect t: %.4f", triangleT);
-		if (isTriangleColliding) {
-			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: TRIANGLE COLLIDING!");
-			ImGui::Text("Point: (%.2f, %.2f, %.2f)", triangleIntersectionPoint.x, triangleIntersectionPoint.y, triangleIntersectionPoint.z);
+		aabb2 = {
+			{ (std::min)(aabb2.min.x, aabb2.max.x), (std::min)(aabb2.min.y, aabb2.max.y), (std::min)(aabb2.min.z, aabb2.max.z) },
+			{ (std::max)(aabb2.min.x, aabb2.max.x), (std::max)(aabb2.min.y, aabb2.max.y), (std::max)(aabb2.min.z, aabb2.max.z) }
+		};
+
+		// 衝突判定
+		bool isColliding = IsCollisionAABBToAABB(aabb1, aabb2);
+
+		// 状態に応じたカラー
+		uint32_t colorAABB1 = isColliding ? 0xFF0000FF : 0xFFFFFFFF; // 衝突:赤 / 非衝突:白
+		uint32_t colorAABB2 = isColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
+
+		// 結果表示
+		ImGui::Text("--- Result ---");
+		if (isColliding) {
+			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
 		}
 		else {
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO TRIANGLE COLLISION");
+			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO COLLISION");
 		}
 
 		ImGui::End();
@@ -468,24 +339,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 1. グリッド
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 2. 平面
-		DrawPlane(plane, viewMatrix, projectionMatrix, viewportMatrix, colorPlane);
+		// 2. AABB1
+		DrawAABB(aabb1, viewMatrix, projectionMatrix, viewportMatrix, colorAABB1);
 
-		// 3. 三角形
-		DrawTriangle(triangle, viewMatrix, projectionMatrix, viewportMatrix, colorTriangle);
-
-		// 4. 線分
-		DrawSegment(segment, viewMatrix, projectionMatrix, viewportMatrix, colorSegment);
-
-		// 5. 交点の描画
-		if (isTriangleColliding) {
-			// 三角形との交点はシアン色(水色)
-			DrawIntersectionPoint(triangleIntersectionPoint, viewMatrix, projectionMatrix, viewportMatrix, 0x00FFFFFF);
-		}
-		else if (isSegmentColliding) {
-			// 平面のみとの交点はイエロー(黄色)
-			DrawIntersectionPoint(intersectionPoint, viewMatrix, projectionMatrix, viewportMatrix, 0xFFFF00FF);
-		}
+		// 3. AABB2
+		DrawAABB(aabb2, viewMatrix, projectionMatrix, viewportMatrix, colorAABB2);
 
 		///
 		/// ↑描画処理ここまで
