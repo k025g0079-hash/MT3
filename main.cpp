@@ -26,6 +26,13 @@ struct Segment {
 	Vector diff;     // 終点への差分ベクトル(B - A)
 };
 
+// 線の種類を定義する列挙型
+enum class LineType {
+	Line,     // 直線（無限）
+	Ray,      // 半直線（始点から無限方向）
+	Segment   // 線分（始点から終点まで）
+};
+
 // --- ベクトル演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
@@ -158,16 +165,13 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 	return result;
 }
 
-// 3D空間から画面(2D)への変換
 Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	Matrix4x4 wvpVpMatrix = Multiply(worldMatrix, Multiply(viewMatrix, Multiply(projectionMatrix, viewportMatrix)));
 	return Transform(position, wvpVpMatrix);
 }
 
-// --- 衝突判定関数 ---
-
-// 平面と線分
-bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector& outPoint) {
+// --- 衝突判定関数 (直線・半直線・線分に拡張) ---
+bool IsCollisionPlaneToLine(Plane plane, Segment segment, LineType type, float& outT, Vector& outPoint) {
 	float denominator = Dot(plane.normal, segment.diff);
 
 	// 平行な場合は衝突しない
@@ -178,8 +182,21 @@ bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector
 	float numerator = plane.distance - Dot(plane.normal, segment.origin);
 	outT = numerator / denominator;
 
-	// 線分の範囲内(0.0 ~ 1.0)で交差しているか
-	if (outT >= 0.0f && outT <= 1.0f) {
+	// 線のタイプに応じて衝突条件を切り替える
+	bool isColliding = false;
+	switch (type) {
+	case LineType::Line:
+		isColliding = true; // 直線なら平行でない限り必ず交差する
+		break;
+	case LineType::Ray:
+		isColliding = (outT >= 0.0f); // 始点から無限方向
+		break;
+	case LineType::Segment:
+		isColliding = (outT >= 0.0f && outT <= 1.0f); // 始点から終点の間
+		break;
+	}
+
+	if (isColliding) {
 		outPoint = Add(segment.origin, Multiply(outT, segment.diff));
 		return true;
 	}
@@ -187,7 +204,6 @@ bool IsCollisionPlaneToSegment(Plane plane, Segment segment, float& outT, Vector
 }
 
 // --- 描画関数 ---
-
 void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix) {
 	const float kGridHalfWidth = 2.0f;
 	const int kSubdivision = 10;
@@ -252,9 +268,25 @@ void DrawPlane(Plane plane, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Ma
 	Novice::DrawLine((int)pCenter.x, (int)pCenter.y, (int)pNormalEnd.x, (int)pNormalEnd.y, 0xFF00FFFF);
 }
 
-void DrawSegment(Segment segment, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+void DrawLineExtended(Segment segment, LineType type, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
 	Vector start = segment.origin;
 	Vector end = Add(segment.origin, segment.diff);
+
+	// 直線や半直線の描画用に引き伸ばす倍率
+	float extendScale = 100.0f;
+
+	switch (type) {
+	case LineType::Line:
+		start = Add(segment.origin, Multiply(-extendScale, segment.diff));
+		end = Add(segment.origin, Multiply(extendScale, segment.diff));
+		break;
+	case LineType::Ray:
+		end = Add(segment.origin, Multiply(extendScale, segment.diff));
+		break;
+	case LineType::Segment:
+		// そのまま
+		break;
+	}
 
 	Vector pStart = Transform3DTo2D(start, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 	Vector pEnd = Transform3DTo2D(end, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
@@ -281,7 +313,7 @@ void DrawIntersectionPoint(Vector point, Matrix4x4 viewMatrix, Matrix4x4 project
 }
 
 // --- メイン関数 ---
-const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3次元衝突判定（平面と線分）";
+const char kWindowTitle[] = "LC1D_28_ワタナベ_アヤト_3次元衝突判定（平面と直線・半直線・線分）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -294,11 +326,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	Vector cameraRotate = { 0.26f, 0.0f, 0.0f };
 	Vector cameraTranslate = { 0.0f, 1.5f, -5.0f };
 
-	// 線分(Segment)の設定
+	// 線の設定
 	Segment segment = {
 		{ 0.0f, 1.0f, 0.0f },  // 始点
-		{ 0.0f, -1.5f, 0.0f }  // 差分ベクトル(終点は 0.0f, -0.5f, 0.0f)
+		{ 0.0f, -1.5f, 0.0f }  // 差分ベクトル
 	};
+	LineType currentLineType = LineType::Segment; // 初期値は線分
 
 	// 平面の設定
 	Plane plane = {
@@ -319,14 +352,14 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// 平面と線分の衝突判定
-		float segmentT = 0.0f;
+		// 平面と線の衝突判定
+		float lineT = 0.0f;
 		Vector intersectionPoint = { 0, 0, 0 };
-		bool isSegmentColliding = IsCollisionPlaneToSegment(plane, segment, segmentT, intersectionPoint);
+		bool isColliding = IsCollisionPlaneToLine(plane, segment, currentLineType, lineT, intersectionPoint);
 
 		// 衝突状態によって色を切り替える
-		uint32_t colorSegment = isSegmentColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
-		uint32_t colorPlane = isSegmentColliding ? 0xFF0000FF : 0xFFFFFFFF;
+		uint32_t colorLine = isColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
+		uint32_t colorPlane = isColliding ? 0xFF0000FF : 0xFFFFFFFF;
 
 		// --- ImGuiによるコントロールパネル ---
 		ImGui::Begin("Collision Control Panel");
@@ -338,22 +371,35 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		if (ImGui::CollapsingHeader("Plane Control", ImGuiTreeNodeFlags_DefaultOpen)) {
 			if (ImGui::DragFloat3("Plane Normal", &plane.normal.x, 0.01f, -1.0f, 1.0f)) {
-				plane.normal = Normalize(plane.normal);
+				// 安全ガード: ユーザーの操作で(0,0,0)になってしまった場合、デフォルトの(0,1,0)に戻す
+				if (Length(plane.normal) < 1e-4f) {
+					plane.normal = { 0.0f, 1.0f, 0.0f };
+				}
+				else {
+					plane.normal = Normalize(plane.normal);
+				}
 			}
 			ImGui::DragFloat("Plane Distance", &plane.distance, 0.02f, -5.0f, 5.0f);
 		}
 
-		if (ImGui::CollapsingHeader("Segment Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Segment Origin(Start)", &segment.origin.x, 0.02f);
-			ImGui::DragFloat3("Segment Diff", &segment.diff.x, 0.02f);
+		if (ImGui::CollapsingHeader("Line Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			// 線の種類をラジオボタンで選択できるように拡張
+			int typeIdx = (int)currentLineType;
+			ImGui::RadioButton("Line (直線)", &typeIdx, 0); ImGui::SameLine();
+			ImGui::RadioButton("Ray (半直線)", &typeIdx, 1); ImGui::SameLine();
+			ImGui::RadioButton("Segment (線分)", &typeIdx, 2);
+			currentLineType = (LineType)typeIdx;
+
+			ImGui::DragFloat3("Line Origin(Start)", &segment.origin.x, 0.02f);
+			ImGui::DragFloat3("Line Diff", &segment.diff.x, 0.02f);
 		}
 
 		ImGui::Separator();
 
 		// 結果表示
-		ImGui::Text("--- Plane to Segment ---");
-		ImGui::Text("Intersect t: %.4f", segmentT);
-		if (isSegmentColliding) {
+		ImGui::Text("--- Analysis ---");
+		ImGui::Text("Intersect t: %.4f", lineT);
+		if (isColliding) {
 			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
 			ImGui::Text("Point: (%.2f, %.2f, %.2f)", intersectionPoint.x, intersectionPoint.y, intersectionPoint.z);
 		}
@@ -383,11 +429,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 2. 平面
 		DrawPlane(plane, viewMatrix, projectionMatrix, viewportMatrix, colorPlane);
 
-		// 3. 線分
-		DrawSegment(segment, viewMatrix, projectionMatrix, viewportMatrix, colorSegment);
+		// 3. 線（直線・半直線・線分の形状に応じて描画）
+		DrawLineExtended(segment, currentLineType, viewMatrix, projectionMatrix, viewportMatrix, colorLine);
 
-		// 4. 線分が衝突している場合は交点(イエロー)を描画
-		if (isSegmentColliding) {
+		// 4. 衝突している場合は交点(イエロー)を描画
+		if (isColliding) {
 			DrawIntersectionPoint(intersectionPoint, viewMatrix, projectionMatrix, viewportMatrix, 0xFFFF00FF);
 		}
 
