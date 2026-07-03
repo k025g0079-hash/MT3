@@ -22,6 +22,12 @@ struct AABB {
 	Vector max; // 最大座標
 };
 
+// 球構造体の追加
+struct Sphere {
+	Vector center; // 中心点
+	float radius;  // 半径
+};
+
 // --- ベクトル演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
@@ -31,6 +37,13 @@ Vector Normalize(Vector v) {
 	float len = Length(v);
 	if (len == 0.0f) return { 0, 0, 0 };
 	return { v.x / len, v.y / len, v.z / len };
+}
+
+// クランプ関数の定義（AABBの最近傍点を求める用）
+float Clamp(float value, float min, float max) {
+	if (value < min) return min;
+	if (value > max) return max;
+	return value;
 }
 
 // --- 行列演算 ---
@@ -160,15 +173,20 @@ Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMat
 
 // --- 衝突判定関数 ---
 
-// AABBとAABBの衝突判定
-bool IsCollisionAABBToAABB(AABB aabb1, AABB aabb2) {
-	if ((aabb1.min.x <= aabb2.max.x && aabb1.max.x >= aabb2.min.x) &&
-		(aabb1.min.y <= aabb2.max.y && aabb1.max.y >= aabb2.min.y) &&
-		(aabb1.min.z <= aabb2.max.z && aabb1.max.z >= aabb2.min.z))
-	{
-		return true;
-	}
-	return false;
+// AABBと球の衝突判定
+bool IsCollisionAABBToSphere(AABB aabb, Sphere sphere) {
+	// AABB上の点の中で、球の中心に最も近い点（最近傍点）を求める
+	Vector closestPoint;
+	closestPoint.x = Clamp(sphere.center.x, aabb.min.x, aabb.max.x);
+	closestPoint.y = Clamp(sphere.center.y, aabb.min.y, aabb.max.y);
+	closestPoint.z = Clamp(sphere.center.z, aabb.min.z, aabb.max.z);
+
+	// 最近傍点と球の中心との距離を計算
+	Vector diff = Subtract(closestPoint, sphere.center);
+	float distance = Length(diff);
+
+	// 距離が球の半径以下であれば衝突している
+	return distance <= sphere.radius;
 }
 
 // --- 描画関数 ---
@@ -234,8 +252,40 @@ void DrawAABB(AABB aabb, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matri
 	Novice::DrawLine((int)screenVertices[3].x, (int)screenVertices[3].y, (int)screenVertices[7].x, (int)screenVertices[7].y, color);
 }
 
+// 球をワイヤーフレーム（3軸の円）で描画する関数
+void DrawSphere(Sphere sphere, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	const int kSubdivision = 16; // 円の分割数
+	const float pi = 3.14159265f;
+
+	for (int i = 0; i < kSubdivision; ++i) {
+		float angle1 = (float)i * 2.0f * pi / (float)kSubdivision;
+		float angle2 = (float)(i + 1) * 2.0f * pi / (float)kSubdivision;
+
+		// 1. XY平面上の円
+		Vector pXY1 = { sphere.center.x + sphere.radius * cosf(angle1), sphere.center.y + sphere.radius * sinf(angle1), sphere.center.z };
+		Vector pXY2 = { sphere.center.x + sphere.radius * cosf(angle2), sphere.center.y + sphere.radius * sinf(angle2), sphere.center.z };
+		Vector sXY1 = Transform3DTo2D(pXY1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector sXY2 = Transform3DTo2D(pXY2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Novice::DrawLine((int)sXY1.x, (int)sXY1.y, (int)sXY2.x, (int)sXY2.y, color);
+
+		// 2. XZ平面上の円
+		Vector pXZ1 = { sphere.center.x + sphere.radius * cosf(angle1), sphere.center.y, sphere.center.z + sphere.radius * sinf(angle1) };
+		Vector pXZ2 = { sphere.center.x + sphere.radius * cosf(angle2), sphere.center.y, sphere.center.z + sphere.radius * sinf(angle2) };
+		Vector sXZ1 = Transform3DTo2D(pXZ1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector sXZ2 = Transform3DTo2D(pXZ2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Novice::DrawLine((int)sXZ1.x, (int)sXZ1.y, (int)sXZ2.x, (int)sXZ2.y, color);
+
+		// 3. YZ平面上の円
+		Vector pYZ1 = { sphere.center.x, sphere.center.y + sphere.radius * cosf(angle1), sphere.center.z + sphere.radius * sinf(angle1) };
+		Vector pYZ2 = { sphere.center.x, sphere.center.y + sphere.radius * cosf(angle2), sphere.center.z + sphere.radius * sinf(angle2) };
+		Vector sYZ1 = Transform3DTo2D(pYZ1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector sYZ2 = Transform3DTo2D(pYZ2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Novice::DrawLine((int)sYZ1.x, (int)sYZ1.y, (int)sYZ2.x, (int)sYZ2.y, color);
+	}
+}
+
 // --- メイン関数 ---
-const char kWindowTitle[] = "3次元衝突判定（AABBとAABB）";
+const char kWindowTitle[] = "3次元衝突判定（AABBと球）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -248,16 +298,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	Vector cameraRotate = { 0.35f, -0.6f, 0.0f };
 	Vector cameraTranslate = { 1.5f, 2.5f, -4.5f };
 
-	// AABB 1 の初期設定
-	AABB aabb1 = {
+	// AABB の初期設定
+	AABB aabb = {
 		{ -0.5f, 0.0f, -0.5f }, // min
 		{  0.5f, 1.0f,  0.5f }  // max
 	};
 
-	// AABB 2 の初期設定
-	AABB aabb2 = {
-		{  0.2f, 0.2f,  0.2f }, // min
-		{  1.2f, 1.2f,  1.2f }  // max
+	// 球（Sphere）の初期設定
+	Sphere sphere = {
+		{ 0.7f, 0.5f, 0.7f }, // center
+		0.4f                  // radius
 	};
 
 	char keys[256] = { 0 };
@@ -281,35 +331,30 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
 		}
 
-		if (ImGui::CollapsingHeader("AABB 1 Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("AABB1 Min", &aabb1.min.x, 0.02f);
-			ImGui::DragFloat3("AABB1 Max", &aabb1.max.x, 0.02f);
+		if (ImGui::CollapsingHeader("AABB Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("AABB Min", &aabb.min.x, 0.02f);
+			ImGui::DragFloat3("AABB Max", &aabb.max.x, 0.02f);
 		}
 
-		if (ImGui::CollapsingHeader("AABB 2 Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("AABB2 Min", &aabb2.min.x, 0.02f);
-			ImGui::DragFloat3("AABB2 Max", &aabb2.max.x, 0.02f);
+		if (ImGui::CollapsingHeader("Sphere Control", ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::DragFloat3("Sphere Center", &sphere.center.x, 0.02f);
+			ImGui::DragFloat("Sphere Radius", &sphere.radius, 0.01f, 0.01f, 5.0f);
 		}
 
 		ImGui::Separator();
 
 		// 【対策】Windows.hのマクロ競合を防ぐため、(std::min) と (std::max) のようにカッコで囲んでいます
-		aabb1 = {
-			{ (std::min)(aabb1.min.x, aabb1.max.x), (std::min)(aabb1.min.y, aabb1.max.y), (std::min)(aabb1.min.z, aabb1.max.z) },
-			{ (std::max)(aabb1.min.x, aabb1.max.x), (std::max)(aabb1.min.y, aabb1.max.y), (std::max)(aabb1.min.z, aabb1.max.z) }
-		};
-
-		aabb2 = {
-			{ (std::min)(aabb2.min.x, aabb2.max.x), (std::min)(aabb2.min.y, aabb2.max.y), (std::min)(aabb2.min.z, aabb2.max.z) },
-			{ (std::max)(aabb2.min.x, aabb2.max.x), (std::max)(aabb2.min.y, aabb2.max.y), (std::max)(aabb2.min.z, aabb2.max.z) }
+		aabb = {
+			{ (std::min)(aabb.min.x, aabb.max.x), (std::min)(aabb.min.y, aabb.max.y), (std::min)(aabb.min.z, aabb.max.z) },
+			{ (std::max)(aabb.min.x, aabb.max.x), (std::max)(aabb.min.y, aabb.max.y), (std::max)(aabb.min.z, aabb.max.z) }
 		};
 
 		// 衝突判定
-		bool isColliding = IsCollisionAABBToAABB(aabb1, aabb2);
+		bool isColliding = IsCollisionAABBToSphere(aabb, sphere);
 
 		// 状態に応じたカラー
-		uint32_t colorAABB1 = isColliding ? 0xFF0000FF : 0xFFFFFFFF; // 衝突:赤 / 非衝突:白
-		uint32_t colorAABB2 = isColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
+		uint32_t colorAABB = isColliding ? 0xFF0000FF : 0xFFFFFFFF;   // 衝突:赤 / 非衝突:白
+		uint32_t colorSphere = isColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
 
 		// 結果表示
 		ImGui::Text("--- Result ---");
@@ -339,11 +384,11 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 1. グリッド
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 2. AABB1
-		DrawAABB(aabb1, viewMatrix, projectionMatrix, viewportMatrix, colorAABB1);
+		// 2. AABB
+		DrawAABB(aabb, viewMatrix, projectionMatrix, viewportMatrix, colorAABB);
 
-		// 3. AABB2
-		DrawAABB(aabb2, viewMatrix, projectionMatrix, viewportMatrix, colorAABB2);
+		// 3. 球
+		DrawSphere(sphere, viewMatrix, projectionMatrix, viewportMatrix, colorSphere);
 
 		///
 		/// ↑描画処理ここまで
