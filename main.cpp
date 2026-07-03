@@ -17,27 +17,20 @@ struct Matrix4x4 {
 	float m[4][4];
 };
 
-struct AABB {
-	Vector min; // 最小座標
-	Vector max; // 最大座標
-};
-
-// 線分（有限の線）構造体
-struct Segment {
-	Vector origin; // 始点
-	Vector diff;   // 始点から終点へのベクトル（終点 - 始点）
+// 2次ベジェ曲線構造体 (制御点0, 1, 2)
+struct BezierCurve {
+	Vector p0; // controlPoints[0]
+	Vector p1; // controlPoints[1]
+	Vector p2; // controlPoints[2]
 };
 
 // --- ベクトル演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
 Vector Multiply(float k, Vector v) { return { k * v.x, k * v.y, k * v.z }; }
-float Length(Vector v) { return sqrtf(v.x * v.x + v.y * v.y + v.z * v.z); }
-Vector Normalize(Vector v) {
-	float len = Length(v);
-	if (len == 0.0f) return { 0, 0, 0 };
-	return { v.x / len, v.y / len, v.z / len };
-}
+float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
+float LengthSq(Vector v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
+float Length(Vector v) { return sqrtf(LengthSq(v)); }
 
 // クランプ関数
 float Clamp(float value, float min, float max) {
@@ -82,7 +75,7 @@ Matrix4x4 Inverse(Matrix4x4 m) {
 			for (int j = 0; j < 8; j++) std::swap(a[i][j], a[pivotRow][j]);
 		}
 		float pivot = a[i][i];
-		if (fabsf(pivot) < 1e-6f) pivot = 1e-6f; // 簡易的なゼロ除算対策
+		if (fabsf(pivot) < 1e-6f) pivot = 1e-6f;
 		for (int j = 0; j < 8; j++) a[i][j] /= pivot;
 		for (int k = 0; k < 4; k++) {
 			if (k == i) continue;
@@ -155,7 +148,7 @@ Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, f
 	return result;
 }
 
-// --- ベクトルと行列による座標変換 ---
+// --- 座標変換 ---
 Vector Transform(Vector vector, Matrix4x4 matrix) {
 	Vector result{};
 	float w = vector.x * matrix.m[0][3] + vector.y * matrix.m[1][3] + vector.z * matrix.m[2][3] + matrix.m[3][3];
@@ -172,49 +165,95 @@ Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMat
 	return Transform(position, wvpVpMatrix);
 }
 
-// --- 衝突判定関数 ---
+// --- 衝突判定アルゴリズム ---
 
-// AABBと線分（Segment）の衝突判定：スラブ判定法
-bool IsCollisionAABBToSegment(AABB aabb, Segment segment) {
-	float t_min = 0.0f;
-	float t_max = 1.0f; // 線分なので媒介変数 t の有効範囲は 0.0 ～ 1.0
+float ClosestDistanceSegmentToSegmentSq(Vector p1, Vector q1, Vector p2, Vector q2) {
+	Vector d1 = Subtract(q1, p1);
+	Vector d2 = Subtract(q2, p2);
+	Vector r = Subtract(p1, p2);
+	float a = Dot(d1, d1);
+	float e = Dot(d2, d2);
+	float f = Dot(d2, r);
 
-	// 各軸の要素にアクセスしやすくするため、配列として展開
-	float origin[] = { segment.origin.x, segment.origin.y, segment.origin.z };
-	float diff[] = { segment.diff.x, segment.diff.y, segment.diff.z };
-	float aabb_min[] = { aabb.min.x, aabb.min.y, aabb.min.z };
-	float aabb_max[] = { aabb.max.x, aabb.max.y, aabb.max.z };
+	float s = 0.0f;
+	float t = 0.0f;
 
-	for (int i = 0; i < 3; ++i) {
-		// 軸に平行（方向ベクトルの成分がほぼゼロ）な場合の例外処理
-		if (fabsf(diff[i]) < 1e-6f) {
-			// 線分の始点がAABBのスラブ外にあるなら絶対に当たらない
-			if (origin[i] < aabb_min[i] || origin[i] > aabb_max[i]) {
-				return false;
-			}
+	if (a <= 1e-6f && e <= 1e-6f) {
+		s = 0.0f; t = 0.0f;
+	}
+	else if (a <= 1e-6f) {
+		s = 0.0f;
+		t = Clamp(f / e, 0.0f, 1.0f);
+	}
+	else {
+		float c = Dot(d1, r);
+		if (e <= 1e-6f) {
+			t = 0.0f;
+			s = Clamp(-c / a, 0.0f, 1.0f);
 		}
 		else {
-			// 手前と奥のスラブへの衝突時間 t を計算
-			float t1 = (aabb_min[i] - origin[i]) / diff[i];
-			float t2 = (aabb_max[i] - origin[i]) / diff[i];
+			float b = Dot(d1, d2);
+			float denom = a * e - b * b;
 
-			// t1 が手前、t2 が奥になるように順序を揃える
-			if (t1 > t2) {
-				std::swap(t1, t2);
+			if (fabsf(denom) > 1e-6f) {
+				s = Clamp((b * f - c * e) / denom, 0.0f, 1.0f);
+			}
+			else {
+				s = 0.0f;
 			}
 
-			// 全軸共通の通過可能区間（重なり）を更新
-			t_min = (std::max)(t_min, t1);
-			t_max = (std::min)(t_max, t2);
+			t = (b * s + f) / e;
 
-			// 区間が逆転（矛盾）したら、その時点で衝突していない
-			if (t_min > t_max) {
-				return false;
+			if (t < 0.0f) {
+				t = 0.0f;
+				s = Clamp(-c / a, 0.0f, 1.0f);
+			}
+			else if (t > 1.0f) {
+				t = 1.0f;
+				s = Clamp((b - c) / a, 0.0f, 1.0f);
 			}
 		}
 	}
 
-	return true;
+	Vector c1 = Add(p1, Multiply(s, d1));
+	Vector c2 = Add(p2, Multiply(t, d2));
+	return LengthSq(Subtract(c1, c2));
+}
+
+Vector EvaluateBezier(const BezierCurve& curve, float t) {
+	float u = 1.0f - t;
+	Vector p;
+
+	p.x = u * u * curve.p0.x + 2.0f * u * t * curve.p1.x + t * t * curve.p2.x;
+	p.y = u * u * curve.p0.y + 2.0f * u * t * curve.p1.y + t * t * curve.p2.y;
+	p.z = u * u * curve.p0.z + 2.0f * u * t * curve.p1.z + t * t * curve.p2.z;
+
+	return p;
+}
+
+// 自己交差判定
+bool IsSelfIntersectionBezier(const BezierCurve& curve, int subdivisions, float thresholdDistance) {
+	float thresholdSq = thresholdDistance * thresholdDistance;
+	const int MAX_SUBDIVISIONS = 128;
+	if (subdivisions > MAX_SUBDIVISIONS) subdivisions = MAX_SUBDIVISIONS;
+
+	Vector points[MAX_SUBDIVISIONS + 1];
+	for (int i = 0; i <= subdivisions; ++i) {
+		points[i] = EvaluateBezier(curve, (float)i / (float)subdivisions);
+	}
+
+	for (int i = 0; i < subdivisions; ++i) {
+		Vector p1 = points[i];
+		Vector q1 = points[i + 1];
+		for (int j = i + 2; j < subdivisions; ++j) {
+			Vector p2 = points[j];
+			Vector q2 = points[j + 1];
+			if (ClosestDistanceSegmentToSegmentSq(p1, q1, p2, q2) <= thresholdSq) {
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 // --- 描画関数 ---
@@ -244,55 +283,24 @@ void DrawGrid(Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewpo
 	}
 }
 
-void DrawAABB(AABB aabb, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	Vector vertices[8] = {
-		{ aabb.min.x, aabb.min.y, aabb.min.z },
-		{ aabb.max.x, aabb.min.y, aabb.min.z },
-		{ aabb.min.x, aabb.max.y, aabb.min.z },
-		{ aabb.max.x, aabb.max.y, aabb.min.z },
-		{ aabb.min.x, aabb.min.y, aabb.max.z },
-		{ aabb.max.x, aabb.min.y, aabb.max.z },
-		{ aabb.min.x, aabb.max.y, aabb.max.z },
-		{ aabb.max.x, aabb.max.y, aabb.max.z }
-	};
+void DrawBezier(const BezierCurve& curve, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color, int subdivisions) {
+	Vector previousPoint = curve.p0;
 
-	Vector screenVertices[8];
-	for (int i = 0; i < 8; ++i) {
-		screenVertices[i] = Transform3DTo2D(vertices[i], MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	for (int i = 1; i <= subdivisions; ++i) {
+		float t = (float)i / (float)subdivisions;
+		Vector currentPoint = EvaluateBezier(curve, t);
+
+		Vector pStart = Transform3DTo2D(previousPoint, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+		Vector pEnd = Transform3DTo2D(currentPoint, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+
+		Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, color);
+
+		previousPoint = currentPoint;
 	}
-
-	// 手前の面
-	Novice::DrawLine((int)screenVertices[0].x, (int)screenVertices[0].y, (int)screenVertices[1].x, (int)screenVertices[1].y, color);
-	Novice::DrawLine((int)screenVertices[1].x, (int)screenVertices[1].y, (int)screenVertices[3].x, (int)screenVertices[3].y, color);
-	Novice::DrawLine((int)screenVertices[3].x, (int)screenVertices[3].y, (int)screenVertices[2].x, (int)screenVertices[2].y, color);
-	Novice::DrawLine((int)screenVertices[2].x, (int)screenVertices[2].y, (int)screenVertices[0].x, (int)screenVertices[0].y, color);
-
-	// 奥の面
-	Novice::DrawLine((int)screenVertices[4].x, (int)screenVertices[4].y, (int)screenVertices[5].x, (int)screenVertices[5].y, color);
-	Novice::DrawLine((int)screenVertices[5].x, (int)screenVertices[5].y, (int)screenVertices[7].x, (int)screenVertices[7].y, color);
-	Novice::DrawLine((int)screenVertices[7].x, (int)screenVertices[7].y, (int)screenVertices[6].x, (int)screenVertices[6].y, color);
-	Novice::DrawLine((int)screenVertices[6].x, (int)screenVertices[6].y, (int)screenVertices[4].x, (int)screenVertices[4].y, color);
-
-	// 縦の柱
-	Novice::DrawLine((int)screenVertices[0].x, (int)screenVertices[0].y, (int)screenVertices[4].x, (int)screenVertices[4].y, color);
-	Novice::DrawLine((int)screenVertices[1].x, (int)screenVertices[1].y, (int)screenVertices[5].x, (int)screenVertices[5].y, color);
-	Novice::DrawLine((int)screenVertices[2].x, (int)screenVertices[2].y, (int)screenVertices[6].x, (int)screenVertices[6].y, color);
-	Novice::DrawLine((int)screenVertices[3].x, (int)screenVertices[3].y, (int)screenVertices[7].x, (int)screenVertices[7].y, color);
-}
-
-// 線分の描画関数
-void DrawSegment(Segment segment, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	Vector start = segment.origin;
-	Vector end = Add(segment.origin, segment.diff); // 始点 + 差分ベクトル = 終点
-
-	Vector pStart = Transform3DTo2D(start, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-	Vector pEnd = Transform3DTo2D(end, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-
-	Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, color);
 }
 
 // --- メイン関数 ---
-const char kWindowTitle[] = "3次元衝突判定（AABBと線分）- マウス操作対応";
+const char kWindowTitle[] = "3次元衝突判定（1本の曲線 - 補助線非表示版）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -300,27 +308,24 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	const int kScreenHeight = 720;
 	Novice::Initialize(kWindowTitle, kScreenWidth, kScreenHeight);
 
-	// カメラ設定（初期状態：中心正面アングル）
+	// カメラ設定（斜め上から見下ろし）
 	Vector cameraScale = { 1.0f, 1.0f, 1.0f };
-	Vector cameraRotate = { 0.0f, 0.0f, 0.0f };
-	Vector cameraTranslate = { 0.0f, 0.5f, -4.5f };
+	Vector cameraRotate = { 0.785f, 0.0f, 0.0f };
+	Vector cameraTranslate = { 0.0f, 3.5f, -4.5f };
 
-	// AABB の初期設定
-	AABB aabb = {
-		{ -0.5f, 0.0f, -0.5f }, // min
-		{  0.5f, 1.0f,  0.5f }  // max
+	// コンパクトなベジェ曲線
+	BezierCurve curve = {
+		{ -0.6f,  0.0f,  0.0f }, // p0 (controlPoints[0])
+		{  0.6f,  1.0f,  0.2f }, // p1 (controlPoints[1])
+		{ -0.6f,  1.0f, -0.2f }, // p2 (controlPoints[2])
 	};
 
-	// 線分（Segment）の初期設定
-	Segment segment = {
-		{ 0.0f, 1.5f, -1.0f }, // origin (始点)
-		{ 0.0f, -2.0f, 2.0f }  // diff (方向・長さベクトル)
-	};
+	int subdivisions = 48;
+	float collisionThreshold = 0.05f;
 
 	char keys[256] = { 0 };
 	char preKeys[256] = { 0 };
 
-	// マウス操作用の変数
 	int prevMouseX, prevMouseY;
 	Novice::GetMousePosition(&prevMouseX, &prevMouseY);
 
@@ -330,100 +335,63 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		memcpy(preKeys, keys, 256);
 		Novice::GetHitKeyStateAll(keys);
 
-		///
-		/// ↓更新処理ここから
-		///
-
 		// --- マウスによるカメラ操作処理 ---
 		int mouseX, mouseY;
 		Novice::GetMousePosition(&mouseX, &mouseY);
-		int mouseDx = mouseX - prevMouseX; // マウスの移動量(X)
-		int mouseDy = mouseY - prevMouseY; // マウスの移動量(Y)
-		int wheel = Novice::GetWheel();   // ホイールの回転量
+		int mouseDx = mouseX - prevMouseX;
+		int mouseDy = mouseY - prevMouseY;
+		int wheel = Novice::GetWheel();
 
-		// ImGuiのウィンドウ上にマウスがない場合のみ、画面操作を受け付ける
 		if (!ImGui::GetIO().WantCaptureMouse) {
-
-			// 1. 左ドラッグ：回転 (Pitch & Yaw)
 			if (Novice::IsPressMouse(0)) {
-				const float rotateSpeed = 0.005f; // 回転感度
-				cameraRotate.x += (float)mouseDy * rotateSpeed; // 上下ドラッグでX軸回転
-				cameraRotate.y += (float)mouseDx * rotateSpeed; // 左右ドラッグでY軸回転
+				const float rotateSpeed = 0.005f;
+				cameraRotate.x += (float)mouseDy * rotateSpeed;
+				cameraRotate.y += (float)mouseDx * rotateSpeed;
 			}
-
-			// 2. 中ドラッグ（ホイールクリック）：平行移動 (Pan)
 			if (Novice::IsPressMouse(2)) {
-				const float panSpeed = 0.01f; // 平行移動感度
-				// カメラの向きに合わせて移動方向を補正する簡易実装
-				float sensitivity = panSpeed * fabsf(cameraTranslate.z); // 距離に応じて移動量を調整
+				const float panSpeed = 0.01f;
+				float sensitivity = panSpeed * fabsf(cameraTranslate.z);
 				cameraTranslate.x -= (float)mouseDx * sensitivity * cosf(cameraRotate.y);
 				cameraTranslate.x -= (float)mouseDy * sensitivity * sinf(cameraRotate.y) * sinf(cameraRotate.x);
 				cameraTranslate.y += (float)mouseDy * sensitivity * cosf(cameraRotate.x);
 				cameraTranslate.z -= (float)mouseDx * sensitivity * sinf(cameraRotate.y);
 				cameraTranslate.z += (float)mouseDy * sensitivity * cosf(cameraRotate.y) * sinf(cameraRotate.x);
 			}
-
-			// 3. ホイール回転：前後移動 (Zoom)
 			if (wheel != 0) {
-				const float zoomSpeed = 0.1f; // ズーム感度
+				const float zoomSpeed = 0.1f;
 				cameraTranslate.z += (float)wheel * zoomSpeed;
 			}
 		}
 
-		// 次フレームのために現在のマウス位置を保存
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
 
-
+		//====================
+		// ImGui
+		//====================
 		ImGui::Begin("Window");
+		ImGui::SetWindowSize(ImVec2(320, 140), ImGuiCond_Once);
 
-		ImGui::DragFloat3("aabb.min", &aabb.min.x, 0.01f);
-		ImGui::DragFloat3("aabb.max", &aabb.max.x, 0.01f);
-
-		ImGui::DragFloat3("segment.origin", &segment.origin.x, 0.01f);
-		ImGui::DragFloat3("segment.diff", &segment.diff.x, 0.01f);
+		ImGui::DragFloat3("controlPoints[0]", &curve.p0.x, 0.01f);
+		ImGui::DragFloat3("controlPoints[1]", &curve.p1.x, 0.01f);
+		ImGui::DragFloat3("controlPoints[2]", &curve.p2.x, 0.01f);
 
 		ImGui::End();
 
-		// 【対策】Windows.hのマクロ競合を防ぐため、(std::min) と (std::max) のようにカッコで囲んでいます
-		aabb = {
-			{ (std::min)(aabb.min.x, aabb.max.x), (std::min)(aabb.min.y, aabb.max.y), (std::min)(aabb.min.z, aabb.max.z) },
-			{ (std::max)(aabb.min.x, aabb.max.x), (std::max)(aabb.min.y, aabb.max.y), (std::max)(aabb.min.z, aabb.max.z) }
-		};
+		// --- 自己交差判定の実行 ---
+		bool isSelfColliding = IsSelfIntersectionBezier(curve, subdivisions, collisionThreshold);
+		uint32_t curveColor = isSelfColliding ? 0xFF0000FF : 0x00FFFFFF;
 
-		// 衝突判定を実行
-		bool isColliding = IsCollisionAABBToSegment(aabb, segment);
-
-		// 状態に応じたカラーの選定
-		uint32_t colorAABB = isColliding ? 0xFF0000FF : 0xFFFFFFFF;     // 衝突:赤 / 非衝突:白
-		uint32_t colorSegment = isColliding ? 0xFF0000FF : 0x00FFFFFF;  // 衝突:赤 / 非衝突:シアン（水色）
-
-		// 行列の生成
+		// 行列計算
 		Matrix4x4 cameraWorldMatrix = MakeAffineMatrix(cameraScale, cameraRotate, cameraTranslate);
 		Matrix4x4 viewMatrix = Inverse(cameraWorldMatrix);
 		Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(0.45f, (float)kScreenWidth / (float)kScreenHeight, 0.1f, 100.0f);
 		Matrix4x4 viewportMatrix = MakeViewportMatrix(0.0f, 0.0f, (float)kScreenWidth, (float)kScreenHeight, 0.0f, 1.0f);
 
-		///
-		/// ↑更新処理ここまで
-		///
-
-		///
-		/// ↓描画処理ここから
-		///
-
-		// 1. グリッド
+		// --- 描画処理 ---
 		DrawGrid(viewMatrix, projectionMatrix, viewportMatrix);
-
-		// 2. AABB
-		DrawAABB(aabb, viewMatrix, projectionMatrix, viewportMatrix, colorAABB);
-
-		// 3. 線分
-		DrawSegment(segment, viewMatrix, projectionMatrix, viewportMatrix, colorSegment);
-
-		///
-		/// ↑描画処理ここまで
-		///
+		// 【変更】DrawControlPoints(curve, ...) をコメントアウト（黒い補助線を削除）
+		DrawBezier(curve, viewMatrix, projectionMatrix, viewportMatrix, curveColor, subdivisions);
 
 		Novice::EndFrame();
 
