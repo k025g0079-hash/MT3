@@ -22,10 +22,10 @@ struct AABB {
 	Vector max; // 最大座標
 };
 
-// 球構造体の追加
-struct Sphere {
-	Vector center; // 中心点
-	float radius;  // 半径
+// 線分（有限の線）構造体
+struct Segment {
+	Vector origin; // 始点
+	Vector diff;   // 始点から終点へのベクトル（終点 - 始点）
 };
 
 // --- ベクトル演算 ---
@@ -39,7 +39,7 @@ Vector Normalize(Vector v) {
 	return { v.x / len, v.y / len, v.z / len };
 }
 
-// クランプ関数の定義（AABBの最近傍点を求める用）
+// クランプ関数
 float Clamp(float value, float min, float max) {
 	if (value < min) return min;
 	if (value > max) return max;
@@ -82,7 +82,7 @@ Matrix4x4 Inverse(Matrix4x4 m) {
 			for (int j = 0; j < 8; j++) std::swap(a[i][j], a[pivotRow][j]);
 		}
 		float pivot = a[i][i];
-		assert(fabsf(pivot) > 1e-6f);
+		if (fabsf(pivot) < 1e-6f) pivot = 1e-6f; // 簡易的なゼロ除算対策
 		for (int j = 0; j < 8; j++) a[i][j] /= pivot;
 		for (int k = 0; k < 4; k++) {
 			if (k == i) continue;
@@ -155,6 +155,7 @@ Matrix4x4 MakeViewportMatrix(float left, float top, float width, float height, f
 	return result;
 }
 
+// --- ベクトルと行列による座標変換 ---
 Vector Transform(Vector vector, Matrix4x4 matrix) {
 	Vector result{};
 	float w = vector.x * matrix.m[0][3] + vector.y * matrix.m[1][3] + vector.z * matrix.m[2][3] + matrix.m[3][3];
@@ -173,20 +174,47 @@ Vector Transform3DTo2D(Vector position, Matrix4x4 worldMatrix, Matrix4x4 viewMat
 
 // --- 衝突判定関数 ---
 
-// AABBと球の衝突判定
-bool IsCollisionAABBToSphere(AABB aabb, Sphere sphere) {
-	// AABB上の点の中で、球の中心に最も近い点（最近傍点）を求める
-	Vector closestPoint;
-	closestPoint.x = Clamp(sphere.center.x, aabb.min.x, aabb.max.x);
-	closestPoint.y = Clamp(sphere.center.y, aabb.min.y, aabb.max.y);
-	closestPoint.z = Clamp(sphere.center.z, aabb.min.z, aabb.max.z);
+// AABBと線分（Segment）の衝突判定：スラブ判定法
+bool IsCollisionAABBToSegment(AABB aabb, Segment segment) {
+	float t_min = 0.0f;
+	float t_max = 1.0f; // 線分なので媒介変数 t の有効範囲は 0.0 ～ 1.0
 
-	// 最近傍点と球の中心との距離を計算
-	Vector diff = Subtract(closestPoint, sphere.center);
-	float distance = Length(diff);
+	// 各軸の要素にアクセスしやすくするため、配列として展開
+	float origin[] = { segment.origin.x, segment.origin.y, segment.origin.z };
+	float diff[] = { segment.diff.x, segment.diff.y, segment.diff.z };
+	float aabb_min[] = { aabb.min.x, aabb.min.y, aabb.min.z };
+	float aabb_max[] = { aabb.max.x, aabb.max.y, aabb.max.z };
 
-	// 距離が球の半径以下であれば衝突している
-	return distance <= sphere.radius;
+	for (int i = 0; i < 3; ++i) {
+		// 軸に平行（方向ベクトルの成分がほぼゼロ）な場合の例外処理
+		if (fabsf(diff[i]) < 1e-6f) {
+			// 線分の始点がAABBのスラブ外にあるなら絶対に当たらない
+			if (origin[i] < aabb_min[i] || origin[i] > aabb_max[i]) {
+				return false;
+			}
+		}
+		else {
+			// 手前と奥のスラブへの衝突時間 t を計算
+			float t1 = (aabb_min[i] - origin[i]) / diff[i];
+			float t2 = (aabb_max[i] - origin[i]) / diff[i];
+
+			// t1 が手前、t2 が奥になるように順序を揃える
+			if (t1 > t2) {
+				std::swap(t1, t2);
+			}
+
+			// 全軸共通の通過可能区間（重なり）を更新
+			t_min = (std::max)(t_min, t1);
+			t_max = (std::min)(t_max, t2);
+
+			// 区間が逆転（矛盾）したら、その時点で衝突していない
+			if (t_min > t_max) {
+				return false;
+			}
+		}
+	}
+
+	return true;
 }
 
 // --- 描画関数 ---
@@ -252,40 +280,19 @@ void DrawAABB(AABB aabb, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matri
 	Novice::DrawLine((int)screenVertices[3].x, (int)screenVertices[3].y, (int)screenVertices[7].x, (int)screenVertices[7].y, color);
 }
 
-// 球をワイヤーフレーム（3軸の円）で描画する関数
-void DrawSphere(Sphere sphere, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
-	const int kSubdivision = 16; // 円の分割数
-	const float pi = 3.14159265f;
+// 線分の描画関数
+void DrawSegment(Segment segment, Matrix4x4 viewMatrix, Matrix4x4 projectionMatrix, Matrix4x4 viewportMatrix, uint32_t color) {
+	Vector start = segment.origin;
+	Vector end = Add(segment.origin, segment.diff); // 始点 + 差分ベクトル = 終点
 
-	for (int i = 0; i < kSubdivision; ++i) {
-		float angle1 = (float)i * 2.0f * pi / (float)kSubdivision;
-		float angle2 = (float)(i + 1) * 2.0f * pi / (float)kSubdivision;
+	Vector pStart = Transform3DTo2D(start, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
+	Vector pEnd = Transform3DTo2D(end, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
 
-		// 1. XY平面上の円
-		Vector pXY1 = { sphere.center.x + sphere.radius * cosf(angle1), sphere.center.y + sphere.radius * sinf(angle1), sphere.center.z };
-		Vector pXY2 = { sphere.center.x + sphere.radius * cosf(angle2), sphere.center.y + sphere.radius * sinf(angle2), sphere.center.z };
-		Vector sXY1 = Transform3DTo2D(pXY1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Vector sXY2 = Transform3DTo2D(pXY2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Novice::DrawLine((int)sXY1.x, (int)sXY1.y, (int)sXY2.x, (int)sXY2.y, color);
-
-		// 2. XZ平面上の円
-		Vector pXZ1 = { sphere.center.x + sphere.radius * cosf(angle1), sphere.center.y, sphere.center.z + sphere.radius * sinf(angle1) };
-		Vector pXZ2 = { sphere.center.x + sphere.radius * cosf(angle2), sphere.center.y, sphere.center.z + sphere.radius * sinf(angle2) };
-		Vector sXZ1 = Transform3DTo2D(pXZ1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Vector sXZ2 = Transform3DTo2D(pXZ2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Novice::DrawLine((int)sXZ1.x, (int)sXZ1.y, (int)sXZ2.x, (int)sXZ2.y, color);
-
-		// 3. YZ平面上の円
-		Vector pYZ1 = { sphere.center.x, sphere.center.y + sphere.radius * cosf(angle1), sphere.center.z + sphere.radius * sinf(angle1) };
-		Vector pYZ2 = { sphere.center.x, sphere.center.y + sphere.radius * cosf(angle2), sphere.center.z + sphere.radius * sinf(angle2) };
-		Vector sYZ1 = Transform3DTo2D(pYZ1, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Vector sYZ2 = Transform3DTo2D(pYZ2, MakeIdentity(), viewMatrix, projectionMatrix, viewportMatrix);
-		Novice::DrawLine((int)sYZ1.x, (int)sYZ1.y, (int)sYZ2.x, (int)sYZ2.y, color);
-	}
+	Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, color);
 }
 
 // --- メイン関数 ---
-const char kWindowTitle[] = "3次元衝突判定（AABBと球）";
+const char kWindowTitle[] = "3次元衝突判定（AABBと線分）- マウス操作対応";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -293,10 +300,10 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	const int kScreenHeight = 720;
 	Novice::Initialize(kWindowTitle, kScreenWidth, kScreenHeight);
 
-	// カメラ設定
+	// カメラ設定（初期状態：中心正面アングル）
 	Vector cameraScale = { 1.0f, 1.0f, 1.0f };
-	Vector cameraRotate = { 0.35f, -0.6f, 0.0f };
-	Vector cameraTranslate = { 1.5f, 2.5f, -4.5f };
+	Vector cameraRotate = { 0.0f, 0.0f, 0.0f };
+	Vector cameraTranslate = { 0.0f, 0.5f, -4.5f };
 
 	// AABB の初期設定
 	AABB aabb = {
@@ -304,14 +311,18 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		{  0.5f, 1.0f,  0.5f }  // max
 	};
 
-	// 球（Sphere）の初期設定
-	Sphere sphere = {
-		{ 0.7f, 0.5f, 0.7f }, // center
-		0.4f                  // radius
+	// 線分（Segment）の初期設定
+	Segment segment = {
+		{ 0.0f, 1.5f, -1.0f }, // origin (始点)
+		{ 0.0f, -2.0f, 2.0f }  // diff (方向・長さベクトル)
 	};
 
 	char keys[256] = { 0 };
 	char preKeys[256] = { 0 };
+
+	// マウス操作用の変数
+	int prevMouseX, prevMouseY;
+	Novice::GetMousePosition(&prevMouseX, &prevMouseY);
 
 	while (Novice::ProcessMessage() == 0) {
 		Novice::BeginFrame();
@@ -323,25 +334,56 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		/// ↓更新処理ここから
 		///
 
-		// --- ImGuiによるコントロールパネル ---
-		ImGui::Begin("Collision Control Panel");
+		// --- マウスによるカメラ操作処理 ---
+		int mouseX, mouseY;
+		Novice::GetMousePosition(&mouseX, &mouseY);
+		int mouseDx = mouseX - prevMouseX; // マウスの移動量(X)
+		int mouseDy = mouseY - prevMouseY; // マウスの移動量(Y)
+		int wheel = Novice::GetWheel();   // ホイールの回転量
 
-		if (ImGui::CollapsingHeader("Camera Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Camera Pos", &cameraTranslate.x, 0.05f);
-			ImGui::DragFloat3("Camera Rot", &cameraRotate.x, 0.01f);
+		// ImGuiのウィンドウ上にマウスがない場合のみ、画面操作を受け付ける
+		if (!ImGui::GetIO().WantCaptureMouse) {
+
+			// 1. 左ドラッグ：回転 (Pitch & Yaw)
+			if (Novice::IsPressMouse(0)) {
+				const float rotateSpeed = 0.005f; // 回転感度
+				cameraRotate.x += (float)mouseDy * rotateSpeed; // 上下ドラッグでX軸回転
+				cameraRotate.y += (float)mouseDx * rotateSpeed; // 左右ドラッグでY軸回転
+			}
+
+			// 2. 中ドラッグ（ホイールクリック）：平行移動 (Pan)
+			if (Novice::IsPressMouse(2)) {
+				const float panSpeed = 0.01f; // 平行移動感度
+				// カメラの向きに合わせて移動方向を補正する簡易実装
+				float sensitivity = panSpeed * fabsf(cameraTranslate.z); // 距離に応じて移動量を調整
+				cameraTranslate.x -= (float)mouseDx * sensitivity * cosf(cameraRotate.y);
+				cameraTranslate.x -= (float)mouseDy * sensitivity * sinf(cameraRotate.y) * sinf(cameraRotate.x);
+				cameraTranslate.y += (float)mouseDy * sensitivity * cosf(cameraRotate.x);
+				cameraTranslate.z -= (float)mouseDx * sensitivity * sinf(cameraRotate.y);
+				cameraTranslate.z += (float)mouseDy * sensitivity * cosf(cameraRotate.y) * sinf(cameraRotate.x);
+			}
+
+			// 3. ホイール回転：前後移動 (Zoom)
+			if (wheel != 0) {
+				const float zoomSpeed = 0.1f; // ズーム感度
+				cameraTranslate.z += (float)wheel * zoomSpeed;
+			}
 		}
 
-		if (ImGui::CollapsingHeader("AABB Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("AABB Min", &aabb.min.x, 0.02f);
-			ImGui::DragFloat3("AABB Max", &aabb.max.x, 0.02f);
-		}
+		// 次フレームのために現在のマウス位置を保存
+		prevMouseX = mouseX;
+		prevMouseY = mouseY;
 
-		if (ImGui::CollapsingHeader("Sphere Control", ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::DragFloat3("Sphere Center", &sphere.center.x, 0.02f);
-			ImGui::DragFloat("Sphere Radius", &sphere.radius, 0.01f, 0.01f, 5.0f);
-		}
 
-		ImGui::Separator();
+		ImGui::Begin("Window");
+
+		ImGui::DragFloat3("aabb.min", &aabb.min.x, 0.01f);
+		ImGui::DragFloat3("aabb.max", &aabb.max.x, 0.01f);
+
+		ImGui::DragFloat3("segment.origin", &segment.origin.x, 0.01f);
+		ImGui::DragFloat3("segment.diff", &segment.diff.x, 0.01f);
+
+		ImGui::End();
 
 		// 【対策】Windows.hのマクロ競合を防ぐため、(std::min) と (std::max) のようにカッコで囲んでいます
 		aabb = {
@@ -349,23 +391,12 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 			{ (std::max)(aabb.min.x, aabb.max.x), (std::max)(aabb.min.y, aabb.max.y), (std::max)(aabb.min.z, aabb.max.z) }
 		};
 
-		// 衝突判定
-		bool isColliding = IsCollisionAABBToSphere(aabb, sphere);
+		// 衝突判定を実行
+		bool isColliding = IsCollisionAABBToSegment(aabb, segment);
 
-		// 状態に応じたカラー
-		uint32_t colorAABB = isColliding ? 0xFF0000FF : 0xFFFFFFFF;   // 衝突:赤 / 非衝突:白
-		uint32_t colorSphere = isColliding ? 0xFF0000FF : 0x00FF00FF; // 衝突:赤 / 非衝突:緑
-
-		// 結果表示
-		ImGui::Text("--- Result ---");
-		if (isColliding) {
-			ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "STATUS: COLLIDING!");
-		}
-		else {
-			ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "STATUS: NO COLLISION");
-		}
-
-		ImGui::End();
+		// 状態に応じたカラーの選定
+		uint32_t colorAABB = isColliding ? 0xFF0000FF : 0xFFFFFFFF;     // 衝突:赤 / 非衝突:白
+		uint32_t colorSegment = isColliding ? 0xFF0000FF : 0x00FFFFFF;  // 衝突:赤 / 非衝突:シアン（水色）
 
 		// 行列の生成
 		Matrix4x4 cameraWorldMatrix = MakeAffineMatrix(cameraScale, cameraRotate, cameraTranslate);
@@ -387,8 +418,8 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		// 2. AABB
 		DrawAABB(aabb, viewMatrix, projectionMatrix, viewportMatrix, colorAABB);
 
-		// 3. 球
-		DrawSphere(sphere, viewMatrix, projectionMatrix, viewportMatrix, colorSphere);
+		// 3. 線分
+		DrawSegment(segment, viewMatrix, projectionMatrix, viewportMatrix, colorSegment);
 
 		///
 		/// ↑描画処理ここまで
