@@ -19,7 +19,6 @@ struct Matrix4x4 {
 	float m[4][4];
 };
 
-// 💡 【指摘1対応】各関節が自身のSRTパラメータと各種行列を持つ構造に変更
 struct Node {
 	Vector scale;
 	Vector rotate;
@@ -29,27 +28,49 @@ struct Node {
 	uint32_t color;
 };
 
-// 💡 【指摘1対応】ベジェ制御点ではなく、純粋な親子階層構造（肩 -> 肘 -> 手）として定義
 struct ArmHierarchy {
 	Node shoulder; // 親 (Shoulder) [赤]
 	Node elbow;    // 子 (Elbow)    [緑]
 	Node hand;     // 孫 (Hand)     [青]
 };
 
-// --- ベクトル・行列演算 ---
-Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
-Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
-Vector Multiply(float k, Vector v) { return { k * v.x, k * v.y, k * v.z }; }
+// --- 💡 演算子オーバーロード (Operator Overloading) ---
 
-Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B) {
+// ベクトル + ベクトル
+Vector operator+(const Vector& v1, const Vector& v2) {
+	return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z };
+}
+
+// ベクトル - ベクトル
+Vector operator-(const Vector& v1, const Vector& v2) {
+	return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z };
+}
+
+// スカラー * ベクトル
+Vector operator*(float k, const Vector& v) {
+	return { k * v.x, k * v.y, k * v.z };
+}
+
+// ベクトル * スカラー
+Vector operator*(const Vector& v, float k) {
+	return { v.x * k, v.y * k, v.z * k };
+}
+
+// 行列 * 行列
+Matrix4x4 operator*(const Matrix4x4& A, const Matrix4x4& B) {
 	Matrix4x4 result{};
 	for (int i = 0; i < 4; i++) {
 		for (int j = 0; j < 4; j++) {
-			for (int k = 0; k < 4; k++) result.m[i][j] += A.m[i][k] * B.m[k][j];
+			for (int k = 0; k < 4; k++) {
+				result.m[i][j] += A.m[i][k] * B.m[k][j];
+			}
 		}
 	}
 	return result;
 }
+
+
+// --- 行列・変換演算関数 ---
 
 Matrix4x4 Inverse(Matrix4x4 m) {
 	Matrix4x4 result{};
@@ -88,7 +109,10 @@ Matrix4x4 MakeAffineMatrix(Vector scale, Vector rotate, Vector translate) {
 	Matrix4x4 rotateX = { {{1.0f,0.0f,0.0f,0.0f},{0.0f,cosf(rotate.x),sinf(rotate.x),0.0f},{0.0f,-sinf(rotate.x),cosf(rotate.x),0.0f},{0.0f,0.0f,0.0f,1.0f}} };
 	Matrix4x4 rotateY = { {{cosf(rotate.y),0.0f,-sinf(rotate.y),0.0f},{0.0f,1.0f,0.0f,0.0f},{sinf(rotate.y),0.0f,cosf(rotate.y),0.0f},{0.0f,0.0f,0.0f,1.0f}} };
 	Matrix4x4 rotateZ = { {{cosf(rotate.z),sinf(rotate.z),0.0f,0.0f},{-sinf(rotate.z),cosf(rotate.z),0.0f,0.0f},{0.0f,0.0f,1.0f,0.0f},{0.0f,0.0f,0.0f,1.0f}} };
-	Matrix4x4 rotMat = Multiply(rotateX, Multiply(rotateY, rotateZ));
+
+	// 💡 演算子オーバーロードでスッキリ結合
+	Matrix4x4 rotMat = rotateX * rotateY * rotateZ;
+
 	return { {
 		{scale.x * rotMat.m[0][0], scale.x * rotMat.m[0][1], scale.x * rotMat.m[0][2], 0.0f},
 		{scale.y * rotMat.m[1][0], scale.y * rotMat.m[1][1], scale.y * rotMat.m[1][2], 0.0f},
@@ -125,7 +149,6 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 	};
 }
 
-// 💡 抽出用関数：行列から平行移動成分(WorldPosition)を取得
 Vector GetWorldPosition(const Matrix4x4& mat) {
 	return { mat.m[3][0], mat.m[3][1], mat.m[3][2] };
 }
@@ -147,26 +170,21 @@ void DrawGrid(const Matrix4x4& vpVpMatrix) {
 	}
 }
 
-// 💡 【変更】階層構造に基づいた関節と骨（ボーン）の描画
 void DrawArmHierarchy(const ArmHierarchy& arm, const Matrix4x4& vpVpMatrix) {
-	// 各ノードのワールド座標を計算された行列から取得
 	Vector shoulderWorld = GetWorldPosition(arm.shoulder.worldMatrix);
 	Vector elbowWorld = GetWorldPosition(arm.elbow.worldMatrix);
 	Vector handWorld = GetWorldPosition(arm.hand.worldMatrix);
 
-	// スクリーン空間（2D）へ変換
 	Vector s2d = Transform(shoulderWorld, vpVpMatrix);
 	Vector e2d = Transform(elbowWorld, vpVpMatrix);
 	Vector h2d = Transform(handWorld, vpVpMatrix);
 
-	// 骨（ボーン）を線で繋ぐ
 	Novice::DrawLine((int)s2d.x, (int)s2d.y, (int)e2d.x, (int)e2d.y, 0xAAAAAAFF);
 	Novice::DrawLine((int)e2d.x, (int)e2d.y, (int)h2d.x, (int)h2d.y, 0xAAAAAAFF);
 
-	// 各関節をそれぞれの色で描画
-	Novice::DrawBox((int)s2d.x - 6, (int)s2d.y - 6, 12, 12, 0.0f, arm.shoulder.color, kFillModeSolid); // 肩: 赤
-	Novice::DrawBox((int)e2d.x - 6, (int)e2d.y - 6, 12, 12, 0.0f, arm.elbow.color, kFillModeSolid);    // 肘: 緑
-	Novice::DrawBox((int)h2d.x - 6, (int)h2d.y - 6, 12, 12, 0.0f, arm.hand.color, kFillModeSolid);     // 手: 青
+	Novice::DrawBox((int)s2d.x - 6, (int)s2d.y - 6, 12, 12, 0.0f, arm.shoulder.color, kFillModeSolid);
+	Novice::DrawBox((int)e2d.x - 6, (int)e2d.y - 6, 12, 12, 0.0f, arm.elbow.color, kFillModeSolid);
+	Novice::DrawBox((int)h2d.x - 6, (int)h2d.y - 6, 12, 12, 0.0f, arm.hand.color, kFillModeSolid);
 }
 
 // --- メイン関数 ---
@@ -178,26 +196,25 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 	Vector cameraScale = { 1.0f, 1.0f, 1.0f }, cameraRotate = { 0.785f, 0.0f, 0.0f }, cameraTranslate = { 0.0f, 3.5f, -6.5f };
 
-	// 💡 【初期化】各ノードのSRTパラメータの初期設定（肘と手は親からの「相対位置」にする）
 	ArmHierarchy arm;
 
-	// 肩 (Shoulder) -> 親ノード（原点付近に配置）
+	// 肩 (Shoulder)
 	arm.shoulder.scale = { 1.0f, 1.0f, 1.0f };
 	arm.shoulder.rotate = { 0.0f, 0.0f, 0.0f };
 	arm.shoulder.translate = { -1.0f, 0.0f, 0.0f };
-	arm.shoulder.color = 0xFF0000FF; // 赤
+	arm.shoulder.color = 0xFF0000FF;
 
-	// 肘 (Elbow) -> 子ノード（肩から右に1.0、上に0.5ずれた位置）
+	// 肘 (Elbow)
 	arm.elbow.scale = { 1.0f, 1.0f, 1.0f };
 	arm.elbow.rotate = { 0.0f, 0.0f, 0.0f };
 	arm.elbow.translate = { 1.0f, 0.5f, 0.0f };
-	arm.elbow.color = 0x00FF00FF; // 緑
+	arm.elbow.color = 0x00FF00FF;
 
-	// 手 (Hand) -> 孫ノード（肘からさらに右に1.0、下に0.5ずれた位置）
+	// 手 (Hand)
 	arm.hand.scale = { 1.0f, 1.0f, 1.0f };
 	arm.hand.rotate = { 0.0f, 0.0f, 0.0f };
 	arm.hand.translate = { 1.0f, -0.5f, 0.0f };
-	arm.hand.color = 0x0000FFFF; // 青
+	arm.hand.color = 0x0000FFFF;
 
 	char keys[256] = { 0 }, preKeys[256] = { 0 };
 	int prevMouseX, prevMouseY;
@@ -222,7 +239,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		}
 		prevMouseX = mouseX; prevMouseY = mouseY;
 
-		// 💡 【指摘3対応】ImGuiで位置座標の直接書き換えではなく、個別のSRT（今回は回転・移動）を操作できるように変更
+		// ImGui描画
 		ImGui::Begin("Arm Hierarchy Control");
 		ImGui::SetWindowSize(ImVec2(400, 320), ImGuiCond_Once);
 
@@ -243,23 +260,22 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		}
 		ImGui::End();
 
-		// 💡 【指摘2対応】階層構造の行列計算（親の行列を順に子に適用する処理）
-		// 1. 各ノードのローカル行列（自身のSRT）を生成
+		// 1. 各ノードのローカル行列を生成
 		arm.shoulder.localMatrix = MakeAffineMatrix(arm.shoulder.scale, arm.shoulder.rotate, arm.shoulder.translate);
 		arm.elbow.localMatrix = MakeAffineMatrix(arm.elbow.scale, arm.elbow.rotate, arm.elbow.translate);
 		arm.hand.localMatrix = MakeAffineMatrix(arm.hand.scale, arm.hand.rotate, arm.hand.translate);
 
-		// 2. 親のワールド行列を子に掛け合わせることで、親の動きを連動させる (Ws = Ls, We = Le * Ws, Wh = Lh * We)
+		// 2. 💡 階層構造の行列計算を演算子（*）でスッキリ記述
 		arm.shoulder.worldMatrix = arm.shoulder.localMatrix;
-		arm.elbow.worldMatrix = Multiply(arm.elbow.localMatrix, arm.shoulder.worldMatrix);
-		arm.hand.worldMatrix = Multiply(arm.hand.localMatrix, arm.elbow.worldMatrix);
+		arm.elbow.worldMatrix = arm.elbow.localMatrix * arm.shoulder.worldMatrix;
+		arm.hand.worldMatrix = arm.hand.localMatrix * arm.elbow.worldMatrix;
 
-
-		// カメラ・ビューポート行列計算
+		// 3. 💡 カメラ・ビューポート行列計算も演算子（*）で直感的に合成
 		Matrix4x4 viewMatrix = Inverse(MakeAffineMatrix(cameraScale, cameraRotate, cameraTranslate));
 		Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(0.45f, (float)kScreenWidth / (float)kScreenHeight, 0.1f, 100.0f);
 		Matrix4x4 viewportMatrix = MakeViewportMatrix(0.0f, 0.0f, (float)kScreenWidth, (float)kScreenHeight, 0.0f, 1.0f);
-		Matrix4x4 vpVpMatrix = Multiply(viewMatrix, Multiply(projectionMatrix, viewportMatrix));
+
+		Matrix4x4 vpVpMatrix = viewMatrix * projectionMatrix * viewportMatrix;
 
 		// 描画
 		DrawGrid(vpVpMatrix);
