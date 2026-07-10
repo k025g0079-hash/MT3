@@ -19,26 +19,27 @@ struct Matrix4x4 {
 	float m[4][4];
 };
 
-// 【新規】階層構造の各関節（ノード）を表す構造体
-struct Joint {
-	Vector position; // 3D座標
-	uint32_t color;  // 部位固有の色
+// 💡 【指摘1対応】各関節が自身のSRTパラメータと各種行列を持つ構造に変更
+struct Node {
+	Vector scale;
+	Vector rotate;
+	Vector translate;
+	Matrix4x4 localMatrix;
+	Matrix4x4 worldMatrix;
+	uint32_t color;
 };
 
-// 【変更】人間の腕をベースにしたベジェ曲線階層構造
-struct ArmBezier {
-	Joint shoulder; // 親ノード (制御点0): 肩 [赤]
-	Joint elbow;    // 子ノード (制御点1): 肘 [緑]
-	Joint hand;     // 孫ノード (制御点2): 手 [青]
+// 💡 【指摘1対応】ベジェ制御点ではなく、純粋な親子階層構造（肩 -> 肘 -> 手）として定義
+struct ArmHierarchy {
+	Node shoulder; // 親 (Shoulder) [赤]
+	Node elbow;    // 子 (Elbow)    [緑]
+	Node hand;     // 孫 (Hand)     [青]
 };
 
 // --- ベクトル・行列演算 ---
 Vector Add(Vector v1, Vector v2) { return { v1.x + v2.x, v1.y + v2.y, v1.z + v2.z }; }
 Vector Subtract(Vector v1, Vector v2) { return { v1.x - v2.x, v1.y - v2.y, v1.z - v2.z }; }
 Vector Multiply(float k, Vector v) { return { k * v.x, k * v.y, k * v.z }; }
-float Dot(Vector v1, Vector v2) { return v1.x * v2.x + v1.y * v2.y + v1.z * v2.z; }
-float LengthSq(Vector v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
-float Clamp(float value, float min, float max) { return (value < min) ? min : ((value > max) ? max : value); }
 
 Matrix4x4 Multiply(Matrix4x4 A, Matrix4x4 B) {
 	Matrix4x4 result{};
@@ -124,48 +125,9 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 	};
 }
 
-// --- 衝突・ベジェ演算 ---
-float ClosestDistanceSegmentToSegmentSq(Vector p1, Vector q1, Vector p2, Vector q2) {
-	Vector d1 = Subtract(q1, p1); Vector d2 = Subtract(q2, p2); Vector r = Subtract(p1, p2);
-	float a = Dot(d1, d1); float e = Dot(d2, d2); float f = Dot(d2, r);
-	float s = 0.0f, t = 0.0f;
-	if (a <= 1e-6f && e <= 1e-6f) {}
-	else if (a <= 1e-6f) { t = Clamp(f / e, 0.0f, 1.0f); }
-	else {
-		float c = Dot(d1, r);
-		if (e <= 1e-6f) { s = Clamp(-c / a, 0.0f, 1.0f); }
-		else {
-			float b = Dot(d1, d2); float denom = a * e - b * b;
-			s = (fabsf(denom) > 1e-6f) ? Clamp((b * f - c * e) / denom, 0.0f, 1.0f) : 0.0f;
-			t = (b * s + f) / e;
-			if (t < 0.0f) { t = 0.0f; s = Clamp(-c / a, 0.0f, 1.0f); }
-			else if (t > 1.0f) { t = 1.0f; s = Clamp((b - c) / a, 0.0f, 1.0f); }
-		}
-	}
-	return LengthSq(Subtract(Add(p1, Multiply(s, d1)), Add(p2, Multiply(t, d2))));
-}
-
-Vector EvaluateBezier(const ArmBezier& arm, float t) {
-	float u = 1.0f - t;
-	return {
-		u * u * arm.shoulder.position.x + 2.0f * u * t * arm.elbow.position.x + t * t * arm.hand.position.x,
-		u * u * arm.shoulder.position.y + 2.0f * u * t * arm.elbow.position.y + t * t * arm.hand.position.y,
-		u * u * arm.shoulder.position.z + 2.0f * u * t * arm.elbow.position.z + t * t * arm.hand.position.z
-	};
-}
-
-bool IsSelfIntersectionBezier(const ArmBezier& arm, int subdivisions, float thresholdDistance) {
-	if (subdivisions < 4) return false;
-	float thresholdSq = thresholdDistance * thresholdDistance;
-	std::vector<Vector> points(subdivisions + 1);
-	for (int i = 0; i <= subdivisions; ++i) points[i] = EvaluateBezier(arm, (float)i / (float)subdivisions);
-
-	for (int i = 0; i < subdivisions; ++i) {
-		for (int j = i + 2; j < subdivisions; ++j) {
-			if (ClosestDistanceSegmentToSegmentSq(points[i], points[i + 1], points[j], points[j + 1]) <= thresholdSq) return true;
-		}
-	}
-	return false;
+// 💡 抽出用関数：行列から平行移動成分(WorldPosition)を取得
+Vector GetWorldPosition(const Matrix4x4& mat) {
+	return { mat.m[3][0], mat.m[3][1], mat.m[3][2] };
 }
 
 // --- 描画関数 ---
@@ -185,25 +147,23 @@ void DrawGrid(const Matrix4x4& vpVpMatrix) {
 	}
 }
 
-// ベジェ曲線の描画
-void DrawArmBezier(const ArmBezier& arm, const Matrix4x4& vpVpMatrix, int subdivisions) {
-	Vector previousPoint = arm.shoulder.position;
-	for (int i = 1; i <= subdivisions; ++i) {
-		float t = (float)i / (float)subdivisions;
-		Vector currentPoint = EvaluateBezier(arm, t);
-		Vector pStart = Transform(previousPoint, vpVpMatrix);
-		Vector pEnd = Transform(currentPoint, vpVpMatrix);
+// 💡 【変更】階層構造に基づいた関節と骨（ボーン）の描画
+void DrawArmHierarchy(const ArmHierarchy& arm, const Matrix4x4& vpVpMatrix) {
+	// 各ノードのワールド座標を計算された行列から取得
+	Vector shoulderWorld = GetWorldPosition(arm.shoulder.worldMatrix);
+	Vector elbowWorld = GetWorldPosition(arm.elbow.worldMatrix);
+	Vector handWorld = GetWorldPosition(arm.hand.worldMatrix);
 
-		// 自己交差していない通常時は、グラデーションの代わりに緑転換ベースで描画（今回は白~グレー線の代わりにシンプルに描画）
-		Novice::DrawLine((int)pStart.x, (int)pStart.y, (int)pEnd.x, (int)pEnd.y, 0xAAAAAAFF);
-		previousPoint = currentPoint;
-	}
+	// スクリーン空間（2D）へ変換
+	Vector s2d = Transform(shoulderWorld, vpVpMatrix);
+	Vector e2d = Transform(elbowWorld, vpVpMatrix);
+	Vector h2d = Transform(handWorld, vpVpMatrix);
 
-	// 【関節ノードの描画】階層構造の各点を指定色でスクリーンに描画
-	Vector s2d = Transform(arm.shoulder.position, vpVpMatrix);
-	Vector e2d = Transform(arm.elbow.position, vpVpMatrix);
-	Vector h2d = Transform(arm.hand.position, vpVpMatrix);
+	// 骨（ボーン）を線で繋ぐ
+	Novice::DrawLine((int)s2d.x, (int)s2d.y, (int)e2d.x, (int)e2d.y, 0xAAAAAAFF);
+	Novice::DrawLine((int)e2d.x, (int)e2d.y, (int)h2d.x, (int)h2d.y, 0xAAAAAAFF);
 
+	// 各関節をそれぞれの色で描画
 	Novice::DrawBox((int)s2d.x - 6, (int)s2d.y - 6, 12, 12, 0.0f, arm.shoulder.color, kFillModeSolid); // 肩: 赤
 	Novice::DrawBox((int)e2d.x - 6, (int)e2d.y - 6, 12, 12, 0.0f, arm.elbow.color, kFillModeSolid);    // 肘: 緑
 	Novice::DrawBox((int)h2d.x - 6, (int)h2d.y - 6, 12, 12, 0.0f, arm.hand.color, kFillModeSolid);     // 手: 青
@@ -216,17 +176,29 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	const int kScreenWidth = 1280; const int kScreenHeight = 720;
 	Novice::Initialize(kWindowTitle, kScreenWidth, kScreenHeight);
 
-	Vector cameraScale = { 1.0f, 1.0f, 1.0f }, cameraRotate = { 0.785f, 0.0f, 0.0f }, cameraTranslate = { 0.0f, 3.5f, -4.5f };
+	Vector cameraScale = { 1.0f, 1.0f, 1.0f }, cameraRotate = { 0.785f, 0.0f, 0.0f }, cameraTranslate = { 0.0f, 3.5f, -6.5f };
 
-	// 【初期化】肩＝赤、肘＝緑、手＝青 のカラーコードを設定
-	ArmBezier arm = {
-		{ { -0.6f,  0.0f,  0.0f }, 0xFF0000FF }, // 肩 (Shoulder) -> 赤
-		{ {  0.6f,  1.0f,  0.2f }, 0x00FF00FF }, // 肘 (Elbow)    -> 緑
-		{ { -0.6f,  1.0f, -0.2f }, 0x0000FFFF }  // 手 (Hand)     -> 青
-	};
+	// 💡 【初期化】各ノードのSRTパラメータの初期設定（肘と手は親からの「相対位置」にする）
+	ArmHierarchy arm;
 
-	int subdivisions = 48;
-	float collisionThreshold = 0.05f;
+	// 肩 (Shoulder) -> 親ノード（原点付近に配置）
+	arm.shoulder.scale = { 1.0f, 1.0f, 1.0f };
+	arm.shoulder.rotate = { 0.0f, 0.0f, 0.0f };
+	arm.shoulder.translate = { -1.0f, 0.0f, 0.0f };
+	arm.shoulder.color = 0xFF0000FF; // 赤
+
+	// 肘 (Elbow) -> 子ノード（肩から右に1.0、上に0.5ずれた位置）
+	arm.elbow.scale = { 1.0f, 1.0f, 1.0f };
+	arm.elbow.rotate = { 0.0f, 0.0f, 0.0f };
+	arm.elbow.translate = { 1.0f, 0.5f, 0.0f };
+	arm.elbow.color = 0x00FF00FF; // 緑
+
+	// 手 (Hand) -> 孫ノード（肘からさらに右に1.0、下に0.5ずれた位置）
+	arm.hand.scale = { 1.0f, 1.0f, 1.0f };
+	arm.hand.rotate = { 0.0f, 0.0f, 0.0f };
+	arm.hand.translate = { 1.0f, -0.5f, 0.0f };
+	arm.hand.color = 0x0000FFFF; // 青
+
 	char keys[256] = { 0 }, preKeys[256] = { 0 };
 	int prevMouseX, prevMouseY;
 	Novice::GetMousePosition(&prevMouseX, &prevMouseY);
@@ -250,18 +222,40 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		}
 		prevMouseX = mouseX; prevMouseY = mouseY;
 
-		// ImGui 
-		ImGui::Begin("Arm Joints Control");
-		ImGui::SetWindowSize(ImVec2(350, 150), ImGuiCond_Once);
-		ImGui::DragFloat3("Shoulder (赤)", &arm.shoulder.position.x, 0.01f);
-		ImGui::DragFloat3("Elbow    (緑)", &arm.elbow.position.x, 0.01f);
-		ImGui::DragFloat3("Hand     (青)", &arm.hand.position.x, 0.01f);
+		// 💡 【指摘3対応】ImGuiで位置座標の直接書き換えではなく、個別のSRT（今回は回転・移動）を操作できるように変更
+		ImGui::Begin("Arm Hierarchy Control");
+		ImGui::SetWindowSize(ImVec2(400, 320), ImGuiCond_Once);
+
+		if (ImGui::TreeNode("Shoulder (肩:親) [赤]")) {
+			ImGui::DragFloat3("Translate", &arm.shoulder.translate.x, 0.01f);
+			ImGui::SliderFloat3("Rotate", &arm.shoulder.rotate.x, -3.14f, 3.14f);
+			ImGui::TreePop();
+		}
+		if (ImGui::TreeNode("Elbow (肘:子) [緑]")) {
+			ImGui::DragFloat3("Translate (相対)", &arm.elbow.translate.x, 0.01f);
+			ImGui::SliderFloat3("Rotate", &arm.elbow.rotate.x, -3.14f, 3.14f);
+			ImGui::TreePop();
+		}
+		if (ImGui::TreeNode("Hand (手:孫) [青]")) {
+			ImGui::DragFloat3("Translate (相対)", &arm.hand.translate.x, 0.01f);
+			ImGui::SliderFloat3("Rotate", &arm.hand.rotate.x, -3.14f, 3.14f);
+			ImGui::TreePop();
+		}
 		ImGui::End();
 
-		// 自己交差判定（衝突時はノード色を上書き変更するなどの拡張も可能）
-		bool isSelfColliding = IsSelfIntersectionBezier(arm, subdivisions, collisionThreshold);
+		// 💡 【指摘2対応】階層構造の行列計算（親の行列を順に子に適用する処理）
+		// 1. 各ノードのローカル行列（自身のSRT）を生成
+		arm.shoulder.localMatrix = MakeAffineMatrix(arm.shoulder.scale, arm.shoulder.rotate, arm.shoulder.translate);
+		arm.elbow.localMatrix = MakeAffineMatrix(arm.elbow.scale, arm.elbow.rotate, arm.elbow.translate);
+		arm.hand.localMatrix = MakeAffineMatrix(arm.hand.scale, arm.hand.rotate, arm.hand.translate);
 
-		// 行列計算
+		// 2. 親のワールド行列を子に掛け合わせることで、親の動きを連動させる (Ws = Ls, We = Le * Ws, Wh = Lh * We)
+		arm.shoulder.worldMatrix = arm.shoulder.localMatrix;
+		arm.elbow.worldMatrix = Multiply(arm.elbow.localMatrix, arm.shoulder.worldMatrix);
+		arm.hand.worldMatrix = Multiply(arm.hand.localMatrix, arm.elbow.worldMatrix);
+
+
+		// カメラ・ビューポート行列計算
 		Matrix4x4 viewMatrix = Inverse(MakeAffineMatrix(cameraScale, cameraRotate, cameraTranslate));
 		Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(0.45f, (float)kScreenWidth / (float)kScreenHeight, 0.1f, 100.0f);
 		Matrix4x4 viewportMatrix = MakeViewportMatrix(0.0f, 0.0f, (float)kScreenWidth, (float)kScreenHeight, 0.0f, 1.0f);
@@ -269,14 +263,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
 		// 描画
 		DrawGrid(vpVpMatrix);
-
-		// 自己交差が検知された場合、手（青）ノードの色を一瞬警告色（明滅やブレンド等）に変える処理を追加するとさらにわかりやすくなります。
-		if (isSelfColliding) {
-			// 衝突時のデバッグ表示など
-			Novice::ScreenPrintf(10, 10, "Status: Self Intersection Detected!");
-		}
-
-		DrawArmBezier(arm, vpVpMatrix, subdivisions);
+		DrawArmHierarchy(arm, vpVpMatrix);
 
 		Novice::EndFrame();
 		if (preKeys[DIK_ESCAPE] == 0 && keys[DIK_ESCAPE] != 0) break;
