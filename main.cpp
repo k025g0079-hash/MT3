@@ -3,7 +3,8 @@
 #include <assert.h>
 #include <utility> 
 #include <algorithm> 
-#include <vector> // 【追加】安全なバッファ管理のため
+#include <vector>
+
 
 #define ImGui_ImplDX12_RGB_Color
 #include <imgui.h>
@@ -19,7 +20,7 @@ struct Matrix4x4 {
 	float m[4][4];
 };
 
-// 2次ベジェ曲線構造体 (制御点0, 1, 2)
+// 2次ベジェ曲線構造体
 struct BezierCurve {
 	Vector p0; // controlPoints[0]
 	Vector p1; // controlPoints[1]
@@ -39,6 +40,11 @@ float Clamp(float value, float min, float max) {
 	if (value < min) return min;
 	if (value > max) return max;
 	return value;
+}
+
+// 【要件対応】線形補間（Lerp）関数
+Vector Lerp(const Vector& v1, const Vector& v2, float t) {
+	return Add(v1, Multiply(t, Subtract(v2, v1)));
 }
 
 // --- 行列演算 ---
@@ -163,7 +169,6 @@ Vector Transform(Vector vector, Matrix4x4 matrix) {
 }
 
 // --- 衝突判定アルゴリズム ---
-
 float ClosestDistanceSegmentToSegmentSq(Vector p1, Vector q1, Vector p2, Vector q2) {
 	Vector d1 = Subtract(q1, p1);
 	Vector d2 = Subtract(q2, p2);
@@ -217,23 +222,23 @@ float ClosestDistanceSegmentToSegmentSq(Vector p1, Vector q1, Vector p2, Vector 
 	return LengthSq(Subtract(c1, c2));
 }
 
-Vector EvaluateBezier(const BezierCurve& curve, float t) {
-	float u = 1.0f - t;
-	Vector p;
-
-	p.x = u * u * curve.p0.x + 2.0f * u * t * curve.p1.x + t * t * curve.p2.x;
-	p.y = u * u * curve.p0.y + 2.0f * u * t * curve.p1.y + t * t * curve.p2.y;
-	p.z = u * u * curve.p0.z + 2.0f * u * t * curve.p1.z + t * t * curve.p2.z;
-
-	return p;
+// 【要件対応】Lerp関数を使用したベジェ曲線の評価
+Vector EvaluateBezier(const Vector& p0, const Vector& p1, const Vector& p2, float t) {
+	Vector p01 = Lerp(p0, p1, t);
+	Vector p12 = Lerp(p1, p2, t);
+	return Lerp(p01, p12, t);
 }
 
-// 自己交差判定 (動的配列を使用してより安全に変更)
+// 構造体オーバーロード用のラッパー
+Vector EvaluateBezier(const BezierCurve& curve, float t) {
+	return EvaluateBezier(curve.p0, curve.p1, curve.p2, t);
+}
+
 bool IsSelfIntersectionBezier(const BezierCurve& curve, int subdivisions, float thresholdDistance) {
-	if (subdivisions < 4) return false; // 最低限の分割数
+	if (subdivisions < 4) return false;
 
 	float thresholdSq = thresholdDistance * thresholdDistance;
-	
+
 	std::vector<Vector> points(subdivisions + 1);
 	for (int i = 0; i <= subdivisions; ++i) {
 		points[i] = EvaluateBezier(curve, (float)i / (float)subdivisions);
@@ -242,7 +247,6 @@ bool IsSelfIntersectionBezier(const BezierCurve& curve, int subdivisions, float 
 	for (int i = 0; i < subdivisions; ++i) {
 		Vector p1 = points[i];
 		Vector q1 = points[i + 1];
-		// 隣接する線分(i+1)は必ず交差するため、i+2から探索する
 		for (int j = i + 2; j < subdivisions; ++j) {
 			Vector p2 = points[j];
 			Vector q2 = points[j + 1];
@@ -255,8 +259,6 @@ bool IsSelfIntersectionBezier(const BezierCurve& curve, int subdivisions, float 
 }
 
 // --- 描画関数 ---
-
-// 合成行列（vpVpMatrix）を予め受け取る形にして計算負荷を軽減
 void DrawGrid(const Matrix4x4& vpVpMatrix) {
 	const float kGridHalfWidth = 2.0f;
 	const int kSubdivision = 10;
@@ -270,7 +272,6 @@ void DrawGrid(const Matrix4x4& vpVpMatrix) {
 		Vector xStart = { -kGridHalfWidth, 0.0f, offset };
 		Vector xEnd = { kGridHalfWidth, 0.0f, offset };
 
-		// グリッド自体はワールド原点(単位行列)なので、カメラ・スクリーン行列のみを適用
 		Vector pZStart = Transform(zStart, vpVpMatrix);
 		Vector pZEnd = Transform(zEnd, vpVpMatrix);
 		Vector pXStart = Transform(xStart, vpVpMatrix);
@@ -283,12 +284,13 @@ void DrawGrid(const Matrix4x4& vpVpMatrix) {
 	}
 }
 
-void DrawBezier(const BezierCurve& curve, const Matrix4x4& vpVpMatrix, uint32_t color, int subdivisions) {
-	Vector previousPoint = curve.p0;
+// 【要件対応】指定された個別の制御点を受け取るシグネチャに変更
+void DrawBezier(const Vector& controlPoint0, const Vector& controlPoint1, const Vector& controlPoint2, const Matrix4x4& vpVpMatrix, uint32_t color, int subdivisions) {
+	Vector previousPoint = controlPoint0;
 
 	for (int i = 1; i <= subdivisions; ++i) {
 		float t = (float)i / (float)subdivisions;
-		Vector currentPoint = EvaluateBezier(curve, t);
+		Vector currentPoint = EvaluateBezier(controlPoint0, controlPoint1, controlPoint2, t);
 
 		Vector pStart = Transform(previousPoint, vpVpMatrix);
 		Vector pEnd = Transform(currentPoint, vpVpMatrix);
@@ -299,8 +301,47 @@ void DrawBezier(const BezierCurve& curve, const Matrix4x4& vpVpMatrix, uint32_t 
 	}
 }
 
+// 【要件対応】コントロールポイント可視化用の球描画関数
+void DrawSphere(const Vector& center, float radius, const Matrix4x4& vpVpMatrix, uint32_t color) {
+	const int kSubdivision = 12;
+	const float PI = 3.14159265358979323846f;
+
+	const float kLatEvery = PI / kSubdivision;
+	const float kLonEvery = PI * 2.0f / kSubdivision;
+
+	for (int latIndex = 0; latIndex < kSubdivision; ++latIndex) {
+		float lat = -(float)PI / 2.0f + kLatEvery * latIndex;
+		for (int lonIndex = 0; lonIndex < kSubdivision; ++lonIndex) {
+			float lon = kLonEvery * lonIndex;
+
+			Vector a = {
+				center.x + radius * cosf(lat) * cosf(lon),
+				center.y + radius * sinf(lat),
+				center.z + radius * cosf(lat) * sinf(lon)
+			};
+			Vector b = {
+				center.x + radius * cosf(lat + kLatEvery) * cosf(lon),
+				center.y + radius * sinf(lat + kLatEvery),
+				center.z + radius * cosf(lat + kLatEvery) * sinf(lon)
+			};
+			Vector c = {
+				center.x + radius * cosf(lat) * cosf(lon + kLonEvery),
+				center.y + radius * sinf(lat),
+				center.z + radius * cosf(lat) * sinf(lon + kLonEvery)
+			};
+
+			Vector pa = Transform(a, vpVpMatrix);
+			Vector pb = Transform(b, vpVpMatrix);
+			Vector pc = Transform(c, vpVpMatrix);
+
+			Novice::DrawLine((int)pa.x, (int)pa.y, (int)pb.x, (int)pb.y, color);
+			Novice::DrawLine((int)pa.x, (int)pa.y, (int)pc.x, (int)pc.y, color);
+		}
+	}
+}
+
 // --- メイン関数 ---
-const char kWindowTitle[] = "3次元衝突判定（1本の曲線 - 補助線非表示版）";
+const char kWindowTitle[] = "3次元衝突判定（1本の曲線 - コントロールポイント可視化版）";
 
 int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 
@@ -308,16 +349,16 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 	const int kScreenHeight = 720;
 	Novice::Initialize(kWindowTitle, kScreenWidth, kScreenHeight);
 
-	// カメラ設定（斜め上から見下ろし）
+	// カメラ設定
 	Vector cameraScale = { 1.0f, 1.0f, 1.0f };
 	Vector cameraRotate = { 0.785f, 0.0f, 0.0f };
 	Vector cameraTranslate = { 0.0f, 3.5f, -4.5f };
 
-	// コンパクトなベジェ曲線
+	// ベジェ曲線
 	BezierCurve curve = {
-		{ -0.6f,  0.0f,  0.0f }, // p0 (controlPoints[0])
-		{  0.6f,  1.0f,  0.2f }, // p1 (controlPoints[1])
-		{ -0.6f,  1.0f, -0.2f }, // p2 (controlPoints[2])
+		{ -0.6f,  0.0f,  0.0f }, // p0
+		{  0.6f,  1.0f,  0.2f }, // p1
+		{ -0.6f,  1.0f, -0.2f }, // p2
 	};
 
 	int subdivisions = 48;
@@ -335,7 +376,7 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		memcpy(preKeys, keys, 256);
 		Novice::GetHitKeyStateAll(keys);
 
-		// --- マウスによるカメラ操作処理 ---
+		// --- マウス操作 ---
 		int mouseX, mouseY;
 		Novice::GetMousePosition(&mouseX, &mouseY);
 		int mouseDx = mouseX - prevMouseX;
@@ -366,35 +407,39 @@ int WINAPI WinMain(_In_ HINSTANCE, _In_opt_ HINSTANCE, _In_ LPSTR, _In_ int) {
 		prevMouseX = mouseX;
 		prevMouseY = mouseY;
 
-		//====================
-		// ImGui
-		//====================
+		// --- ImGui ---
 		ImGui::Begin("Window");
 		ImGui::SetWindowSize(ImVec2(320, 160), ImGuiCond_Once);
 
 		ImGui::DragFloat3("controlPoints[0]", &curve.p0.x, 0.01f);
 		ImGui::DragFloat3("controlPoints[1]", &curve.p1.x, 0.01f);
 		ImGui::DragFloat3("controlPoints[2]", &curve.p2.x, 0.01f);
-		ImGui::SliderInt("Subdivisions", &subdivisions, 10, 128); // 【追加】分割数も変更可能に
+		ImGui::SliderInt("Subdivisions", &subdivisions, 10, 128);
 
 		ImGui::End();
 
-		// --- 自己交差判定の実行 ---
+		// --- 判定 ---
 		bool isSelfColliding = IsSelfIntersectionBezier(curve, subdivisions, collisionThreshold);
 		uint32_t curveColor = isSelfColliding ? 0xFF0000FF : 0x00FFFFFF;
 
-		// --- 各種行列計算 ---
+		// --- 行列計算 ---
 		Matrix4x4 cameraWorldMatrix = MakeAffineMatrix(cameraScale, cameraRotate, cameraTranslate);
 		Matrix4x4 viewMatrix = Inverse(cameraWorldMatrix);
 		Matrix4x4 projectionMatrix = MakePerspectiveFovMatrix(0.45f, (float)kScreenWidth / (float)kScreenHeight, 0.1f, 100.0f);
 		Matrix4x4 viewportMatrix = MakeViewportMatrix(0.0f, 0.0f, (float)kScreenWidth, (float)kScreenHeight, 0.0f, 1.0f);
-
-		// ループ外で共通の合成行列を作成 (ワールド行列はIdentityなので除外)
 		Matrix4x4 vpVpMatrix = Multiply(viewMatrix, Multiply(projectionMatrix, viewportMatrix));
 
 		// --- 描画処理 ---
 		DrawGrid(vpVpMatrix);
-		DrawBezier(curve, vpVpMatrix, curveColor, subdivisions);
+
+		// 【要件対応】修正したDrawBezier関数の呼び出し
+		DrawBezier(curve.p0, curve.p1, curve.p2, vpVpMatrix, curveColor, subdivisions);
+
+		// 【要件対応】コントロールポイントの球描画
+		const float pointRadius = 0.05f;
+		DrawSphere(curve.p0, pointRadius, vpVpMatrix, 0x00FF00FF); // Green
+		DrawSphere(curve.p1, pointRadius, vpVpMatrix, 0xFFFF00FF); // Yellow
+		DrawSphere(curve.p2, pointRadius, vpVpMatrix, 0x00FF00FF); // Green
 
 		Novice::EndFrame();
 
